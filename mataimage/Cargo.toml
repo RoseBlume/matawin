@@ -1,0 +1,34 @@
+[package]
+name = "mataimage"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+flate2 = "1.1.9"
+
+[features]
+default = ["all-formats", "simd"]
+simd = []
+nightly = []
+
+# Formats
+all-formats = ["bmp", "pgm", "tga", "png", "wbmp"]
+bmp = []
+pgm = []
+tga = []
+png = []
+wbmp = []
+
+# Unsupported
+webp = []
+tiff = []
+gif = []
+jpeg = []
+
+# Bmp
+# Pgm
+# Tga
+# Png
+# WebP // EXPERIMENTAL
+
+
