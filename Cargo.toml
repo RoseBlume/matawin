@@ -3,13 +3,32 @@ resolver = "3"
 members = [
     "matadump",
     "matawin",
-    "matarand",
-    "mataimage"
+    "mataimage",
+    "mata-audio",
+    "matafonts",
+    "mata-electrons",
+    "mata-macros",
+    "mata-playback",
+    "remata-macros",
+    "mata-video"
 ]
 
-
+# Throughput-oriented defaults for direct builds of this crate. Library users
+# remain free to override profiles from their workspace root.
 [profile.release]
 opt-level = 3
-lto = true
-strip = true
+lto = "thin"
+
+# Distribution profile for users willing to trade build time for codegen quality.
+[profile.release-fat]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# Explicit size-oriented profile used by the binary-size matrix script.
+[profile.release-size]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
 

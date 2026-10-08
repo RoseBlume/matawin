@@ -1,0 +1,6 @@
+id	kind	path
+wav_s16_stereo	wav	corpus/wav_s16_stereo_44100.wav
+aiff_s16_stereo	aiff	corpus/aiff_s16_stereo_44100.aiff
+flac_s16_stereo	flac	corpus/flac_s16_stereo_44100.flac
+ogg_vorbis	ogg	corpus/vorbis_96k_48000.ogg
+matroska_stub	matroska	corpus/matroska_pcm_stub.mka

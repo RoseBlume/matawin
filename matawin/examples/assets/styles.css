@@ -1,0 +1,70 @@
+html {
+    background-color: #f4f7fb;
+}
+
+body {
+    font-family: Arial, "Liberation Sans", sans-serif;
+    color: #1f2937;
+    background-color: #f4f7fb;
+    margin: 0;
+}
+
+.hero {
+    background-color: #182235;
+    color: white;
+    padding: 28px 36px;
+    margin-bottom: 22px;
+}
+
+.hero h1 {
+    font-family: "Trebuchet MS", Arial, "Liberation Sans", sans-serif;
+    color: #7dd3fc;
+    margin: 0 0 10px 0;
+}
+
+.hero p {
+    color: #dbeafe;
+    margin: 0;
+}
+
+.content {
+    width: 82%;
+    margin-left: 60px;
+    padding: 8px 0 28px 0;
+}
+
+.card {
+    background-color: white;
+    border: 2px solid #cbd5e1;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+}
+
+.card h2 {
+    color: #334155;
+    margin-top: 0;
+}
+
+.card strong {
+    color: #7c3aed;
+}
+
+.note {
+    background-color: #eef2ff;
+    border-left-width: 4px;
+    border-color: #6366f1;
+    padding: 10px;
+}
+
+
+.font-serif {
+    font-family: "Times New Roman", "Liberation Serif", serif;
+}
+
+.font-mono {
+    font-family: Consolas, "Liberation Mono", monospace;
+}
+
+.font-fallback {
+    font-family: "This Font Does Not Exist", Arial, "Liberation Sans", sans-serif;
+}

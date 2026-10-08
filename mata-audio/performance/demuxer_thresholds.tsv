@@ -1,0 +1,6 @@
+id	startup_ns_max	throughput_mib_s_min
+wav_s16_stereo	500000000	1.0
+aiff_s16_stereo	500000000	1.0
+flac_s16_stereo	500000000	1.0
+ogg_vorbis	500000000	0.25
+matroska_stub	500000000	0.01

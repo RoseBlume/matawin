@@ -1,22 +1,38 @@
-use super::{MSG, TranslateMessage, DispatchMessageA, PeekMessageA};
+//! Implements the `events` module.
+//!
+//! This module documents both public API items and internal implementation details.
+
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW,
+    PeekMessageW,
+    TranslateMessage,
+    MSG,
+    PM_REMOVE,
+    WM_SIZE,
+};
 
 impl super::PlatformWindow {
+    /// Performs the pump events operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the pump events operation. Visibility: public."]
     pub fn pump_events(&self) {
-        let mut msg = MSG {
-            hwnd: std::ptr::null_mut(),
-            message: 0,
-            wParam: 0,
-            lParam: 0,
-            time: 0,
-            pt_x: 0,
-            pt_y: 0,
-        };
+        let mut msg = MSG::default();
 
         unsafe {
-            while PeekMessageA(&mut msg, std::ptr::null_mut(), 0, 0, 1) != 0 {
-                TranslateMessage(&msg);
-                DispatchMessageA(&msg);
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                // Track client-size changes without a GetClientRect call in the
+                // per-frame presentation hot path.
+                if msg.hwnd == self.hwnd && msg.message == WM_SIZE {
+                    let raw = msg.lParam.0 as usize;
+                    let width = (raw & 0xffff) as u32;
+                    let height = ((raw >> 16) & 0xffff) as u32;
+                    self.client_size.set((width, height));
+                }
+
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
             }
         }
-    }    
+    }
 }

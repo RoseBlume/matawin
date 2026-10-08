@@ -1,0 +1,213 @@
+[package]
+name = "mata-audio"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# Full-featured build: native playback, runtime SIMD, every decoder/demuxer,
+# every metadata parser, and content-based automatic decoder selection.
+default = [
+    "mata-playback",
+    "simd",
+    "all-codecs",
+    "all-demuxers",
+    "all-metadata",
+    "auto-detect",
+    "offline",
+]
+
+# Runtime-dispatched SIMD acceleration. Scalar fallbacks remain available when
+# this feature is disabled.
+simd = []
+
+# Internal performance harnesses and optional per-stage timing. Neither is
+# enabled in normal library builds.
+benchmarking = []
+perf-instrumentation = []
+
+# Offline/high-throughput pipeline. This uses only std by default and remains
+# isolated from the latency-first playback callback/mixer path.
+offline = ["auto-detect"]
+# Optional quantified approximations; exact/default math is unchanged.
+fast-math = []
+# Explicit software-prefetch experiment. Disabled unless profiling selects it.
+prefetch = []
+# Optional local-file memory mapping for the P600 experiment.
+mmap = ["offline", "dep:memmap2"]
+
+# ---- Codec features -------------------------------------------------------
+codec-flac = ["demux-flac"]
+codec-mp1 = []
+codec-mp2 = []
+codec-mp3 = []
+codec-pcm = []
+codec-vorbis = ["demux-ogg"]
+all-codecs = [
+    "codec-flac",
+    "codec-mp1",
+    "codec-mp2",
+    "codec-mp3",
+    "codec-pcm",
+    "codec-vorbis",
+]
+
+# ---- Demuxer features -----------------------------------------------------
+demux-aiff = []
+demux-flac = []
+demux-matroska = []
+demux-ogg = []
+demux-wav = []
+all-demuxers = [
+    "demux-aiff",
+    "demux-flac",
+    "demux-matroska",
+    "demux-ogg",
+    "demux-wav",
+]
+
+# ---- Metadata features ----------------------------------------------------
+metadata-ape = []
+metadata-id3v1 = []
+metadata-id3v2 = []
+metadata-iso-mp4 = []
+metadata-riff = []
+metadata-vorbis-flac = ["demux-flac"]
+metadata-vorbis-ogg = ["demux-ogg"]
+all-metadata = [
+    "metadata-ape",
+    "metadata-id3v1",
+    "metadata-id3v2",
+    "metadata-iso-mp4",
+    "metadata-riff",
+    "metadata-vorbis-flac",
+    "metadata-vorbis-ogg",
+]
+
+# Content-based AudioDecoder/AudioFormat convenience API. Direct codec types
+# can still be used without this feature in small builds.
+auto-detect = [
+    "codec-flac",
+    "codec-mp1",
+    "codec-mp2",
+    "codec-mp3",
+    "codec-pcm",
+    "codec-vorbis",
+    "demux-aiff",
+    "demux-wav",
+]
+
+# Playback backends. Playback uses AudioDecoder, so either backend enables the
+# automatic decoder feature. mata-playback remains the default backend.
+mata-playback = ["dep:mata-playback", "auto-detect"]
+cpal = ["dep:cpal", "auto-detect"]
+
+[dependencies]
+mata-playback = { version = "0.1.0", path = "../mata-playback", optional = true, features = ["realtime"] }
+cpal = { version = "0.18.2", optional = true, features = ["realtime"] }
+memmap2 = { version = "0.9", optional = true }
+
+
+# Performance profiles used by performance/scripts/benchmark_codegen.sh. The
+# normal release profile stays portable and runtime-dispatched.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "unwind"
+
+[profile.perf]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1
+
+[profile.perf-size]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+
+[profile.perf-fat]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.perf-parallel]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 8
+
+[[example]]
+name = "play"
+required-features = ["cpal", "auto-detect"]
+
+[[example]]
+name = "play_streaming"
+required-features = ["cpal", "auto-detect"]
+
+[[bin]]
+name = "mata-audio-perf"
+path = "src/bin/mata-audio-perf.rs"
+required-features = ["benchmarking", "auto-detect"]
+
+[[bin]]
+name = "mata-audio-demux-perf"
+path = "src/bin/mata-audio-demux-perf.rs"
+required-features = ["benchmarking", "all-demuxers"]
+
+[[bin]]
+name = "mata-audio-demux-fuzz"
+path = "src/bin/mata-audio-demux-fuzz.rs"
+required-features = ["benchmarking", "all-demuxers"]
+
+[[bin]]
+name = "mata-audio-metadata-perf"
+path = "src/bin/mata-audio-metadata-perf.rs"
+required-features = ["benchmarking"]
+
+[[bin]]
+name = "mata-audio-metadata-fuzz"
+path = "src/bin/mata-audio-metadata-fuzz.rs"
+required-features = ["benchmarking"]
+
+[[bin]]
+name = "mata-audio-seek-perf"
+path = "src/bin/mata-audio-seek-perf.rs"
+required-features = ["benchmarking", "auto-detect"]
+
+[[bin]]
+name = "mata-audio-memory-perf"
+path = "src/bin/mata-audio-memory-perf.rs"
+required-features = ["benchmarking", "auto-detect"]
+
+[[bin]]
+name = "mata-audio-math-perf"
+path = "src/bin/mata-audio-math-perf.rs"
+required-features = ["benchmarking"]
+
+[[bin]]
+name = "mata-audio-playback-memory-perf"
+path = "src/bin/mata-audio-playback-memory-perf.rs"
+required-features = ["benchmarking", "mata-playback"]
+
+[[bin]]
+name = "mata-audio-offline-perf"
+path = "src/bin/mata-audio-offline-perf.rs"
+required-features = ["benchmarking", "offline"]
+
+[[bin]]
+name = "mata-audio-memory-strategies"
+path = "src/bin/mata-audio-memory-strategies.rs"
+required-features = ["benchmarking"]
+
+[[bin]]
+name = "mata-audio-device-perf"
+path = "src/bin/mata-audio-device-perf.rs"
+required-features = ["benchmarking", "mata-playback"]
+
+[[example]]
+name = "emit_pcm"
+required-features = ["auto-detect"]

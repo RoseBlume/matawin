@@ -1,0 +1,170 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# x64 = x86_64; arm64 = AArch64. Every runner compiles natively.
+# Four independent groups let a failure block only its own matawin job.
+jobs:
+  # ---------------------------------------------------------------------------
+  # Ubuntu x64: all four packages run independently; no fail-fast cancellation.
+  # ---------------------------------------------------------------------------
+  check-ubuntu-x64:
+    name: Ubuntu x64 / ${{ matrix.package }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [mataimage, mata-video, mata-audio, matafonts]
+    steps: &ubuntu_core_steps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install package-specific Linux dependencies
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          packages=()
+          case "$PACKAGE" in
+            mataimage)
+              # The current image implementation has no required native libraries.
+              ;;
+            matafonts)
+              packages+=(libfontconfig1-dev libfreetype-dev pkg-config)
+              ;;
+            mata-audio)
+              packages+=(libasound2-dev libpulse-dev pkg-config)
+              ;;
+            mata-video)
+              packages+=(
+                pkg-config
+                libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+                gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+                libasound2-dev libpulse-dev
+              )
+              ;;
+            *) echo "Unexpected package: $PACKAGE" >&2; exit 1 ;;
+          esac
+          if (( ${#packages[@]} )); then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          fi
+
+      - name: Check ${{ matrix.package }}
+        shell: bash
+        run: cargo check -p "${{ matrix.package }}"
+
+  # Ubuntu ARM64 uses the same build steps on a native ARM64 runner.
+  check-ubuntu-arm64:
+    name: Ubuntu ARM64 / ${{ matrix.package }}
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [mataimage, mata-video, mata-audio, matafonts]
+    steps: *ubuntu_core_steps
+
+  # ---------------------------------------------------------------------------
+  # Windows checks: MSVC/Windows SDK are present in hosted Windows images.
+  # No GStreamer or Linux native libraries are installed here.
+  # ---------------------------------------------------------------------------
+  check-windows-x64:
+    name: Windows x64 / ${{ matrix.package }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [mataimage, mata-video, mata-audio, matafonts]
+    steps: &windows_core_steps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check ${{ matrix.package }}
+        run: cargo check -p ${{ matrix.package }}
+
+  # Windows ARM64 uses the same build steps on a native ARM64 runner.
+  check-windows-arm64:
+    name: Windows ARM64 / ${{ matrix.package }}
+    runs-on: windows-11-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [mataimage, mata-video, mata-audio, matafonts]
+    steps: *windows_core_steps
+
+  # ---------------------------------------------------------------------------
+  # matawin is checked ONLY after all four packages on its particular
+  # OS + architecture have succeeded. Other groups are not affected.
+  # ---------------------------------------------------------------------------
+  matawin-ubuntu-x64:
+    name: matawin / Ubuntu x64
+    runs-on: ubuntu-24.04
+    needs: [check-ubuntu-x64]
+    steps: &ubuntu_matawin_steps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install matawin Linux dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libwayland-egl-backend-dev libseat-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgbm-dev libdrm-dev \
+            libudev-dev libdbus-1-dev \
+            libfontconfig1-dev libfreetype-dev \
+            libasound2-dev libpulse-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+
+      - name: Check matawin
+        shell: bash
+        run: cargo check -p matawin
+
+  matawin-ubuntu-arm64:
+    name: matawin / Ubuntu ARM64
+    runs-on: ubuntu-24.04-arm
+    needs: [check-ubuntu-arm64]
+    steps: *ubuntu_matawin_steps
+
+  matawin-windows-x64:
+    name: matawin / Windows x64
+    runs-on: windows-2025
+    needs: [check-windows-x64]
+    steps: &windows_matawin_steps
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check matawin
+        run: cargo check -p matawin
+
+  matawin-windows-arm64:
+    name: matawin / Windows ARM64
+    runs-on: windows-11-arm
+    needs: [check-windows-arm64]
+    steps: *windows_matawin_steps

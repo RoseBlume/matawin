@@ -1,395 +1,470 @@
-use std::ffi::{CString, c_void};
-use std::ptr::{null, null_mut};
+//! Implements the `x11` module.
+//!
+//! This module documents both public API items and internal implementation details.
 
+use std::{ cell::{ Cell, RefCell }, collections::HashSet, ffi::c_void, sync::Mutex };
+
+use x11rb::{
+    connection::Connection,
+    protocol::xproto::{
+        Atom,
+        AtomEnum,
+        ChangeWindowAttributesAux,
+        CreateWindowAux,
+        EventMask,
+        PropMode,
+        Window,
+        WindowClass,
+        ConnectionExt as _,
+    },
+    rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
+    COPY_DEPTH_FROM_PARENT,
+    COPY_FROM_PARENT,
+};
+
+/// Contains the drop implementation.
+///
+/// Visibility: **private**.
+mod drop;
+/// Contains the events implementation.
+///
+/// Visibility: **private**.
+mod events;
+/// Contains the renderer implementation.
+///
+/// Visibility: **private**.
+mod renderer;
+/// Contains the show implementation.
+///
+/// Visibility: **private**.
+mod show;
 
 use crate::buffer::Framebuffer;
-use crate::events::{WindowEvent, Key, EVENT_QUEUE};
+use crate::events::{ Key, WindowEvent, EVENT_QUEUE, KEYS_DOWN };
+use renderer::X11Renderer;
 
-mod show;
-mod drop;
-
-type Display = *mut c_void;
-type WindowHandle = u64;
-type GC = *mut c_void;
-
-// #[repr(C)]
-// struct XEvent {
-//     pad: [u64; 24], // big enough for all variants
-// }
-
-#[repr(C)]
-struct XImage {
-    width: i32,
-    height: i32,
-    xoffset: i32,
-    format: i32,
-    data: *mut i8,
-    byte_order: i32,
-    bitmap_unit: i32,
-    bitmap_bit_order: i32,
-    bitmap_pad: i32,
-    depth: i32,
-    bytes_per_line: i32,
-    bits_per_pixel: i32,
-    red_mask: u64,
-    green_mask: u64,
-    blue_mask: u64,
+#[derive(Clone, Copy)]
+/// Stores the state and data for atoms.
+///
+/// Visibility: **parent-module-visible**.
+pub(super) struct Atoms {
+    /// Stores wm protocols.
+    ///
+    /// Visibility: **public**.
+    pub wm_protocols: Atom,
+    /// Stores wm delete window.
+    ///
+    /// Visibility: **public**.
+    pub wm_delete_window: Atom,
+    /// Stores wm change state.
+    ///
+    /// Visibility: **public**.
+    pub wm_change_state: Atom,
+    /// Stores net wm name.
+    ///
+    /// Visibility: **public**.
+    pub net_wm_name: Atom,
+    /// Stores utf8 string.
+    ///
+    /// Visibility: **public**.
+    pub utf8_string: Atom,
+    /// Stores net wm state.
+    ///
+    /// Visibility: **public**.
+    pub net_wm_state: Atom,
+    /// Stores net wm state maximized horz.
+    ///
+    /// Visibility: **public**.
+    pub net_wm_state_maximized_horz: Atom,
+    /// Stores net wm state maximized vert.
+    ///
+    /// Visibility: **public**.
+    pub net_wm_state_maximized_vert: Atom,
+    /// Stores motif wm hints.
+    ///
+    /// Visibility: **public**.
+    pub motif_wm_hints: Atom,
 }
 
-#[link(name = "X11")]
-unsafe extern "C" {
-    fn XOpenDisplay(name: *const i8) -> Display;
-    fn XDefaultScreen(display: Display) -> i32;
-    fn XRootWindow(display: Display, screen: i32) -> WindowHandle;
-
-    fn XCreateSimpleWindow(
-        display: Display,
-        parent: WindowHandle,
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-        border_width: u32,
-        border: u64,
-        background: u64,
-    ) -> WindowHandle;
-
-    fn XMapWindow(display: Display, window: WindowHandle);
-    fn XStoreName(display: Display, window: WindowHandle, name: *const i8);
-
-    fn XCreateGC(display: Display, window: WindowHandle, valuemask: u64, values: *mut c_void) -> GC;
-
-    fn XNextEvent(display: Display, event: *mut XEvent);
-    fn XPending(display: Display) -> i32;
-
-    fn XSelectInput(display: Display, window: WindowHandle, event_mask: i64);
-
-    fn XCreateImage(
-        display: Display,
-        visual: *mut c_void,
-        depth: u32,
-        format: i32,
-        offset: i32,
-        data: *mut i8,
-        width: u32,
-        height: u32,
-        bitmap_pad: i32,
-        bytes_per_line: i32,
-    ) -> *mut XImage;
-
-    fn XPutImage(
-        display: Display,
-        drawable: WindowHandle,
-        gc: GC,
-        image: *mut XImage,
-        src_x: i32,
-        src_y: i32,
-        dest_x: i32,
-        dest_y: i32,
-        width: u32,
-        height: u32,
-    );
+/// Implements intern.
+///
+/// Visibility: **private**.
+#[doc = "Implements the intern operation. Visibility: private/internal."]
+fn intern(conn: &RustConnection, name: &str) -> Result<Atom, String> {
+    let cookie = conn
+        .intern_atom(false, name.as_bytes())
+        .map_err(|error| format!("failed to request X11 atom {name}: {error}"))?;
+    let reply = cookie.reply().map_err(|error| format!("failed to read X11 atom {name}: {error}"))?;
+    Ok(reply.atom)
 }
 
-const EXPOSURE_MASK: i64 = 0x8000;
-const KEY_PRESS_MASK: i64 = 0x0001;
-const BUTTON_PRESS_MASK: i64 = 0x0004;
-const STRUCTURE_NOTIFY_MASK: i64 = 0x20000;
+/// Loads atoms.
+///
+/// Visibility: **private**.
+#[doc = "Loads atoms. Visibility: private/internal."]
+fn load_atoms(conn: &RustConnection) -> Result<Atoms, String> {
+    Ok(Atoms {
+        wm_protocols: intern(conn, "WM_PROTOCOLS")?,
+        wm_delete_window: intern(conn, "WM_DELETE_WINDOW")?,
+        wm_change_state: intern(conn, "WM_CHANGE_STATE")?,
+        net_wm_name: intern(conn, "_NET_WM_NAME")?,
+        utf8_string: intern(conn, "UTF8_STRING")?,
+        net_wm_state: intern(conn, "_NET_WM_STATE")?,
+        net_wm_state_maximized_horz: intern(conn, "_NET_WM_STATE_MAXIMIZED_HORZ")?,
+        net_wm_state_maximized_vert: intern(conn, "_NET_WM_STATE_MAXIMIZED_VERT")?,
+        motif_wm_hints: intern(conn, "_MOTIF_WM_HINTS")?,
+    })
+}
 
-fn push_event(event: WindowEvent) {
-    if let Some(q) = EVENT_QUEUE.get() {
-        q.lock().unwrap().push(event);
+/// Pushes event.
+///
+/// Visibility: **parent-module-visible**.
+#[doc = "Pushes event. Visibility: parent-module-visible."]
+pub(super) fn push_event(event: WindowEvent) {
+    if let Some(queue) = EVENT_QUEUE.get() {
+        queue.lock().unwrap().push(event);
     }
 }
 
+/// Sets key down.
+///
+/// Visibility: **parent-module-visible**.
+#[doc = "Sets key down. Visibility: parent-module-visible."]
+pub(super) fn set_key_down(key: Key, down: bool) -> bool {
+    if let Some(keys) = KEYS_DOWN.get() {
+        let mut keys = keys.lock().unwrap();
+        if down {
+            return keys.insert(key);
+        }
+        return keys.remove(&key);
+    }
+    false
+}
+
+/// Native X11 backend implemented with x11rb's pure-Rust connection.
+///
+/// It connects to the current user's X server through `DISPLAY`. No root access,
+/// `/dev/input` access, Xlib FFI, or `sudo` is required.
 pub struct PlatformWindow {
-    display: Display,
-    window: WindowHandle,
-    gc: GC,
-    wm_delete: Atom,
-    size: (u32, u32),
-    image: *mut XImage,
+    /// Stores connection.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) connection: RustConnection,
+    /// Stores screen num.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) screen_num: usize,
+    /// Stores root.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) root: Window,
+    /// Stores window.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) window: Window,
+    /// Stores atoms.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) atoms: Atoms,
+    /// Stores renderer.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) renderer: X11Renderer,
+
+    /// Stores size.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) size: Cell<(u32, u32)>,
+    /// Stores client size.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) client_size: Cell<(u32, u32)>,
+    /// Stores position.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) position: Cell<(i32, i32)>,
+    /// Stores hidden.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) hidden: Cell<bool>,
+    /// Stores maximized.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) maximized: Cell<bool>,
+    /// Stores decorations.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) decorations: Cell<bool>,
+    /// Stores maximizable.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) maximizable: Cell<bool>,
+    /// Stores minimizable.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) minimizable: Cell<bool>,
+    /// Stores resizable.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) resizable: Cell<bool>,
+    /// Stores keymap.
+    ///
+    /// Visibility: **parent-module-visible**.
+    pub(super) keymap: RefCell<[Option<Key>; 256]>,
 }
 
 impl PlatformWindow {
+    /// Creates an X11 window, panicking if X11 cannot be initialized.
+    #[doc = "Creates a new value. Visibility: public."]
     pub fn new(title: &str, size: (u32, u32)) -> Self {
-        EVENT_QUEUE.get_or_init(|| Mutex::new(Vec::new()));
-        unsafe {
-            let display = XOpenDisplay(null());
-            let screen = XDefaultScreen(display);
-            let root = XRootWindow(display, screen);
+        Self::try_new(title, size).unwrap_or_else(|error|
+            panic!("Failed to create X11 window: {error}")
+        )
+    }
 
-            let window = XCreateSimpleWindow(
-                display,
+    /// Attempts to create an X11 window without panicking on setup failure.
+    ///
+    /// This is used by the Linux runtime selector after a Wayland attempt fails.
+    #[doc = "Implements the try new operation. Visibility: public."]
+    pub fn try_new(title: &str, size: (u32, u32)) -> Result<Self, String> {
+        if size.0 == 0 || size.1 == 0 {
+            return Err("X11 windows must have a non-zero size".to_owned());
+        }
+        if size.0 > (u16::MAX as u32) || size.1 > (u16::MAX as u32) {
+            return Err("X11 window dimensions must fit in u16".to_owned());
+        }
+
+        KEYS_DOWN.get_or_init(|| Mutex::new(HashSet::with_capacity(16)));
+        EVENT_QUEUE.get_or_init(|| Mutex::new(Vec::with_capacity(32)));
+
+        let (connection, screen_num) = x11rb
+            ::connect(None)
+            .map_err(|error| format!("failed to connect to the X11 server: {error}"))?;
+        let screen = connection
+            .setup()
+            .roots.get(screen_num)
+            .ok_or_else(|| format!("X11 screen index {screen_num} does not exist"))?;
+        let root = screen.root;
+        let black_pixel = screen.black_pixel;
+        let window = connection
+            .generate_id()
+            .map_err(|error| format!("failed to allocate X11 window ID: {error}"))?;
+
+        let event_mask =
+            EventMask::EXPOSURE |
+            EventMask::STRUCTURE_NOTIFY |
+            EventMask::KEY_PRESS |
+            EventMask::KEY_RELEASE |
+            EventMask::BUTTON_PRESS |
+            EventMask::BUTTON_RELEASE |
+            EventMask::POINTER_MOTION |
+            EventMask::FOCUS_CHANGE |
+            EventMask::PROPERTY_CHANGE;
+
+        connection
+            .create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
                 root,
                 0,
                 0,
-                size.0,
-                size.1,
+                size.0 as u16,
+                size.1 as u16,
                 0,
-                0,
-                0,
-            );
+                WindowClass::INPUT_OUTPUT,
+                COPY_FROM_PARENT,
+                &CreateWindowAux::new().background_pixel(black_pixel).event_mask(event_mask)
+            )
+            .map_err(|error| format!("failed to create X11 window: {error}"))?;
 
-            let c_title = CString::new(title).unwrap();
-            XStoreName(display, window, c_title.as_ptr());
-            let wm_delete = XInternAtom(display, CString::new("WM_DELETE_WINDOW").unwrap().as_ptr(), 0);
-            XSetWMProtocols(display, window, &wm_delete as *const _ as *mut _, 1);
-
-            XSelectInput(
-                display,
+        let atoms = load_atoms(&connection)?;
+        connection
+            .change_property32(
+                PropMode::REPLACE,
                 window,
-                EXPOSURE_MASK
-                    | KEY_PRESS_MASK
-                    | BUTTON_PRESS_MASK
-                    | STRUCTURE_NOTIFY_MASK,
-            );
+                atoms.wm_protocols,
+                AtomEnum::ATOM,
+                &[atoms.wm_delete_window]
+            )
+            .map_err(|error| format!("failed to install WM_DELETE_WINDOW protocol: {error}"))?;
 
-            XMapWindow(display, window);
+        set_title_raw(&connection, window, atoms, title);
+        connection
+            .map_window(window)
+            .map_err(|error| format!("failed to map X11 window: {error}"))?;
+        connection.flush().map_err(|error| format!("failed to flush X11 setup requests: {error}"))?;
 
-            let gc = XCreateGC(display, window, 0, null_mut());
+        let keymap = load_keymap(&connection);
+        let renderer = X11Renderer::new(&connection, window, screen_num, size, size);
 
-            let image = XCreateImage(
-                display,
-                null_mut(),
-                24,
-                2, // ZPixmap
-                0,
-                null_mut(),
-                size.0,
-                size.1,
-                32,
-                0,
-            );
-
-            Self {
-                display,
-                window,
-                gc,
-                size,
-                image,
-                wm_delete,
-            }
-        }
+        Ok(Self {
+            connection,
+            screen_num,
+            root,
+            window,
+            atoms,
+            renderer,
+            size: Cell::new(size),
+            client_size: Cell::new(size),
+            position: Cell::new((0, 0)),
+            hidden: Cell::new(false),
+            maximized: Cell::new(false),
+            decorations: Cell::new(true),
+            maximizable: Cell::new(true),
+            minimizable: Cell::new(true),
+            resizable: Cell::new(true),
+            keymap: RefCell::new(keymap),
+        })
     }
 
-    pub fn pump_events(&self) {
-        unsafe {
-            let mut event: XEvent = std::mem::zeroed();
-
-            while XPending(self.display) > 0 {
-                XNextEvent(self.display, &mut event);
-
-                match event.type_ {
-                    KEY_PRESS => {
-                        let key_event =
-                            &*(&event.xkey as *const _ as *const XKeyEvent);
-
-                        let keysym =
-                            XLookupKeysym(key_event as *const _ as *mut _, 0);
-
-                        if let Some(key) = Self::map_key(keysym) {
-                            push_event(WindowEvent::KeyPressed(key));
-                        }
-                    }
-
-                    BUTTON_PRESS => {
-                        let btn =
-                            &*(&event.xbutton as *const _ as *const XButtonEvent);
-
-                        match btn.button {
-                            1 => push_event(WindowEvent::KeyPressed(Key::MouseLeft)),
-                            2 => push_event(WindowEvent::KeyPressed(Key::MouseMiddle)),
-                            3 => push_event(WindowEvent::KeyPressed(Key::MouseRight)),
-                            _ => {}
-                        }
-                    }
-
-                    CONFIGURE_NOTIFY => {
-                        let cfg =
-                            &*(&event.xconfigure as *const _ as *const XConfigureEvent);
-
-                        push_event(WindowEvent::Resized(
-                            cfg.width as u32,
-                            cfg.height as u32,
-                        ));
-
-                        push_event(WindowEvent::Repositioned(cfg.x, cfg.y));
-                    }
-
-                    CLIENT_MESSAGE => {
-                        let client =
-                            &*(&event as *const _ as *const XClientMessageEvent);
-
-                        if client.data[0] == self.wm_delete {
-                            push_event(WindowEvent::Close);
-                        }
-                    }
-
-                    _ => {}
-                }
-            }
-        }
-    }
-
+    /// Performs the present operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the present operation. Visibility: public."]
     pub fn present(&mut self, fb: &Framebuffer) {
-        unsafe {
-            (*self.image).data = fb.as_ptr() as *mut i8;
-
-            XPutImage(
-                self.display,
-                self.window,
-                self.gc,
-                self.image,
-                0,
-                0,
-                0,
-                0,
-                self.size.0,
-                self.size.1,
-            );
+        if self.hidden.get() {
+            return;
         }
+        let target = self.client_size.get();
+        if target.0 == 0 || target.1 == 0 {
+            return;
+        }
+        let source = (fb.width, fb.height);
+        self.size.set(source);
+        self.renderer.resize_framebuffer(source);
+        self.renderer.resize_target(target);
+        self.renderer.present(&self.connection, self.window, fb.as_ptr());
     }
 
+    /// Sets title.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets title. Visibility: public."]
     pub fn set_title(&self, title: &str) {
-        let c_title = CString::new(title).unwrap();
-
-        unsafe {
-            XStoreName(self.display, self.window, c_title.as_ptr());
-        }
+        set_title_raw(&self.connection, self.window, self.atoms, title);
+        let _ = self.connection.flush();
     }
 
+    /// Returns the X11 Window XID encoded as a pointer-sized value for API parity.
+    #[doc = "Implements the handle operation. Visibility: public."]
     pub fn handle(&self) -> *mut c_void {
-        self.window as *mut c_void
+        self.window as usize as *mut c_void
     }
 
-    fn map_key(keysym: KeySym) -> Option<Key> {
-        match keysym {
-            0xff08 => Some(Key::Backspace),
-            0xff0d => Some(Key::Enter),
-            0xff09 => Some(Key::Tab),
-            0xff1b => Some(Key::Escape),
-            0x20 => Some(Key::Space),
+    /// Performs the window operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the window operation. Visibility: public."]
+    pub fn window(&self) -> Window {
+        self.window
+    }
+    /// Performs the framebuffer size operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the framebuffer size operation. Visibility: public."]
+    pub fn framebuffer_size(&self) -> (u32, u32) {
+        self.size.get()
+    }
+    /// Computes client size.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the client size operation. Visibility: public."]
+    pub fn client_size(&self) -> (u32, u32) {
+        self.client_size.get()
+    }
 
-            0xff51 => Some(Key::Left),
-            0xff52 => Some(Key::Up),
-            0xff53 => Some(Key::Right),
-            0xff54 => Some(Key::Down),
+    /// Performs the reload keymap operation.
+    ///
+    /// Visibility: **parent-module-visible**.
+    #[doc = "Implements the reload keymap operation. Visibility: parent-module-visible."]
+    pub(super) fn reload_keymap(&self) {
+        *self.keymap.borrow_mut() = load_keymap(&self.connection);
+    }
+}
 
-            0xffe1 => Some(Key::LeftShift),
-            0xffe2 => Some(Key::RightShift),
+/// Sets title raw.
+///
+/// Visibility: **private**.
+#[doc = "Sets title raw. Visibility: private/internal."]
+fn set_title_raw(conn: &RustConnection, window: Window, atoms: Atoms, title: &str) {
+    let _ = conn.change_property8(
+        PropMode::REPLACE,
+        window,
+        atoms.net_wm_name,
+        atoms.utf8_string,
+        title.as_bytes()
+    );
+    let _ = conn.change_property8(
+        PropMode::REPLACE,
+        window,
+        AtomEnum::WM_NAME,
+        AtomEnum::STRING,
+        title.as_bytes()
+    );
+}
 
-            0xffe3 => Some(Key::LeftCtrl),
-            0xffe4 => Some(Key::RightCtrl),
+/// Loads keymap.
+///
+/// Visibility: **private**.
+#[doc = "Loads keymap. Visibility: private/internal."]
+fn load_keymap(conn: &RustConnection) -> [Option<Key>; 256] {
+    let setup = conn.setup();
+    let first = setup.min_keycode;
+    let count = setup.max_keycode.saturating_sub(first).saturating_add(1);
+    let Ok(cookie) = conn.get_keyboard_mapping(first, count) else {
+        return [None; 256];
+    };
+    let Ok(reply) = cookie.reply() else {
+        return [None; 256];
+    };
+    let per = reply.keysyms_per_keycode as usize;
+    if per == 0 {
+        return [None; 256];
+    }
 
-            0xffbe..=0xffc9 => Some(Key::F((keysym - 0xffbe + 1) as u8)),
-
-            0x30..=0x39 => Some(Key::Num((keysym - 0x30) as u8)),
-
-            0x61..=0x7a => Some(Key::Char((keysym as u8) as char)),
-
-            0x41..=0x5a => Some(Key::Char((keysym as u8 as char).to_ascii_lowercase())),
-
-            _ => None,
+    let mut result = [None; 256];
+    for i in 0..count as usize {
+        let start = i * per;
+        let end = (start + per).min(reply.keysyms.len());
+        let mut mapped = None;
+        for &sym in &reply.keysyms[start..end] {
+            if let Some(key) = map_keysym(sym) {
+                mapped = Some(key);
+                break;
+            }
+        }
+        if let Some(key) = mapped {
+            result[first.wrapping_add(i as u8) as usize] = Some(key);
         }
     }
+    result
 }
 
-
-type Atom = u64;
-type KeySym = u64;
-
-#[link(name = "X11")]
-unsafe extern "C" {
-    fn XLookupKeysym(event: *mut XKeyEvent, index: i32) -> KeySym;
-
-    fn XInternAtom(display: Display, name: *const i8, only_if_exists: i32) -> Atom;
-
-    fn XSetWMProtocols(
-        display: Display,
-        window: WindowHandle,
-        protocols: *mut Atom,
-        count: i32,
-    ) -> i32;
+/// Implements map keysym.
+///
+/// Visibility: **private**.
+#[doc = "Implements the map keysym operation. Visibility: private/internal."]
+fn map_keysym(sym: u32) -> Option<Key> {
+    match sym {
+        0xff08 => Some(Key::Backspace),
+        0xff09 => Some(Key::Tab),
+        0xff0d => Some(Key::Enter),
+        0xff1b => Some(Key::Escape),
+        0x0020 => Some(Key::Space),
+        0xff51 => Some(Key::Left),
+        0xff52 => Some(Key::Up),
+        0xff53 => Some(Key::Right),
+        0xff54 => Some(Key::Down),
+        0xffe1 => Some(Key::LeftShift),
+        0xffe2 => Some(Key::RightShift),
+        0xffe3 => Some(Key::LeftCtrl),
+        0xffe4 => Some(Key::RightCtrl),
+        0xffbe..=0xffc9 => Some(Key::F((sym - 0xffbe + 1) as u8)),
+        0x30..=0x39 => Some(Key::Num((sym - 0x30) as u8)),
+        0x41..=0x5a => Some(Key::Char((sym as u8 as char).to_ascii_lowercase())),
+        0x61..=0x7a => Some(Key::Char(sym as u8 as char)),
+        0x21..=0x7e => Some(Key::Char(sym as u8 as char)),
+        _ => None,
+    }
 }
-
-#[repr(C)]
-pub struct XClientMessageEvent {
-    pub type_: i32,
-    pub serial: u64,
-    pub send_event: i32,
-    pub display: Display,
-    pub window: WindowHandle,
-    pub message_type: u64,
-    pub format: i32,
-    pub data: [u64; 5],
-}
-
-#[repr(C)]
-pub struct XKeyEvent {
-    pub type_: i32,
-    pub serial: u64,
-    pub send_event: i32,
-    pub display: Display,
-    pub window: WindowHandle,
-    pub root: WindowHandle,
-    pub subwindow: WindowHandle,
-    pub time: u64,
-    pub x: i32,
-    pub y: i32,
-    pub x_root: i32,
-    pub y_root: i32,
-    pub state: u32,
-    pub keycode: u32,
-    pub same_screen: i32,
-}
-
-#[repr(C)]
-pub struct XButtonEvent {
-    pub type_: i32,
-    pub serial: u64,
-    pub send_event: i32,
-    pub display: Display,
-    pub window: WindowHandle,
-    pub root: WindowHandle,
-    pub subwindow: WindowHandle,
-    pub time: u64,
-    pub x: i32,
-    pub y: i32,
-    pub x_root: i32,
-    pub y_root: i32,
-    pub state: u32,
-    pub button: u32,
-    pub same_screen: i32,
-}
-
-#[repr(C)]
-pub struct XConfigureEvent {
-    pub type_: i32,
-    pub serial: u64,
-    pub send_event: i32,
-    pub display: Display,
-    pub event: WindowHandle,
-    pub window: WindowHandle,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub border_width: i32,
-    pub above: WindowHandle,
-    pub override_redirect: i32,
-}
-
-#[repr(C)]
-pub union XEvent {
-    pub type_: i32,
-    pub xkey: std::mem::ManuallyDrop<XKeyEvent>,
-    pub xbutton: std::mem::ManuallyDrop<XButtonEvent>,
-    pub xconfigure: std::mem::ManuallyDrop<XConfigureEvent>,
-    pub pad: [u64; 24],
-}
-
-const KEY_PRESS: i32 = 2;
-const BUTTON_PRESS: i32 = 4;
-const CONFIGURE_NOTIFY: i32 = 22;
-const CLIENT_MESSAGE: i32 = 33;

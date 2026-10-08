@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>matahtml CSS demo</title>
+
+    <!-- External CSS -->
+    <link rel="stylesheet" href="styles.css">
+
+    <!-- Internal CSS -->
+    <style>
+        .internal-demo {
+            background-color: #fff3c4;
+            border: 2px solid #e4a600;
+            padding: 12px;
+            margin-top: 14px;
+            margin-bottom: 14px;
+        }
+
+        .internal-demo strong {
+            color: #a34f00;
+        }
+    </style>
+</head>
+<body>
+    <header class="hero">
+        <h1>matahtml</h1>
+        <p>A software HTML and CSS renderer drawn directly into a matawin framebuffer.</p>
+    </header>
+
+    <main class="content">
+        <section class="card">
+            <h2>External CSS</h2>
+            <p>This card, its spacing, colors, border, and typography come from <strong>styles.css</strong>.</p>
+        </section>
+
+        <section class="internal-demo">
+            <h2>Internal CSS</h2>
+            <p>This section is styled by a <strong>style element</strong> in the HTML head.</p>
+        </section>
+
+        <section class="card" style="background-color: #e9f7ff; border-color: #2e86c1;">
+            <h2 style="color: #145a86;">Inline CSS</h2>
+            <p>The blue background, border, and heading color are supplied through inline style attributes.</p>
+        </section>
+
+        <section class="card">
+            <h2>System fonts through matafonts</h2>
+            <p>The page now resolves CSS <strong>font-family</strong> values against installed TrueType fonts and rasterizes them with matafonts.</p>
+            <p class="font-serif">This line asks for Times New Roman and falls back to Liberation Serif.</p>
+            <p class="font-mono">This line asks for Consolas and falls back to Liberation Mono.</p>
+            <p class="font-fallback"><em>This line intentionally asks for a missing font first, then falls back to Arial or Liberation Sans.</em></p>
+        </section>
+
+        <section class="card">
+            <h2>Supported now</h2>
+            <p>Block and inline flow, text wrapping, descendant selectors, tag/class/id selectors, colors, backgrounds, widths, margins, padding, borders, font families, font sizing, bold and italic faces, text alignment, and vertical scrolling.</p>
+            <p class="note">Use the Up and Down arrow keys to scroll this example. Escape closes the window.</p>
+        </section>
+
+        <section class="card">
+            <h2>JavaScript</h2>
+            <p>Script elements are accepted by the HTML parser but are intentionally not executed yet.</p>
+        </section>
+    </main>
+</body>
+</html>

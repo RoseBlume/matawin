@@ -4,31 +4,39 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-flate2 = "1.1.9"
+rav1d = { version = "1.1.0", optional = true }
+remata-macros = { path = "../remata-macros", optional = true }
 
 [features]
 default = ["all-formats", "simd"]
 simd = []
 nightly = []
 
-# Formats
-all-formats = ["bmp", "pgm", "tga", "png", "wbmp"]
+# Stable raster formats. Keeping this convenience group as the default is an API
+# ergonomics choice; footprint-sensitive users should disable default features
+# and select only the formats they need.
+all-formats = ["bmp", "pgm", "tga", "png", "wbmp", "qoi", "jpeg", "webp", "gif", "fits", "ico"]
 bmp = []
 pgm = []
 tga = []
-png = []
+png = ["dep:remata-macros"]
 wbmp = []
-
-# Unsupported
-webp = []
-tiff = []
-gif = []
+qoi = ["dep:remata-macros"]
 jpeg = []
+webp = []
+gif = []
+fits = []
+ico = ["png", "bmp"]
 
-# Bmp
-# Pgm
-# Tga
-# Png
-# WebP // EXPERIMENTAL
+# Experimental formats are never pulled into all-formats implicitly.
+experimental-formats = ["avif", "tiff", "svg"]
+avif = ["dep:rav1d"]
+tiff = ["dep:remata-macros"]
+svg = []
 
+[dev-dependencies]
+image = "0.25.10"
 
+[[bench]]
+name = "decode"
+harness = false

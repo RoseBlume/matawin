@@ -1,246 +1,256 @@
-use std::ffi::CString;
-use std::ptr::{null, null_mut};
+//! Implements the `show` module.
+//!
+//! This module documents both public API items and internal implementation details.
 
-use super::{Display, WindowHandle};
-
-type Atom = u64;
-
-#[repr(C)]
-struct XEvent {
-    pad: [u64; 24],
-}
-
-#[link(name = "X11")]
-unsafe extern "C" {
-    fn XMapWindow(display: Display, window: WindowHandle);
-    fn XUnmapWindow(display: Display, window: WindowHandle);
-
-    fn XMoveWindow(display: Display, window: WindowHandle, x: i32, y: i32);
-    fn XResizeWindow(display: Display, window: WindowHandle, width: u32, height: u32);
-
-    fn XInternAtom(display: Display, name: *const i8, only_if_exists: i32) -> Atom;
-
-    fn XSendEvent(
-        display: Display,
-        window: WindowHandle,
-        propagate: i32,
-        event_mask: i64,
-        event_send: *mut XEvent,
-    ) -> i32;
-
-    fn XFlush(display: Display);
-}
-
-const SUBSTRUCTURE_REDIRECT_MASK: i64 = 0x02000000;
-const SUBSTRUCTURE_NOTIFY_MASK: i64 = 0x04000000;
+use x11rb::{
+    connection::Connection,
+    properties::WmSizeHints,
+    protocol::xproto::{
+        ClientMessageData,
+        ClientMessageEvent,
+        ConfigureWindowAux,
+        ConnectionExt as _,
+        EventMask,
+        PropMode,
+    },
+    wrapper::ConnectionExt as _,
+};
 
 impl super::PlatformWindow {
-    // ------------------------
-    // Visibility
-    // ------------------------
-
-    pub fn show(&self) {
-        unsafe {
-            XMapWindow(self.display, self.window);
-            XFlush(self.display);
-        }
-    }
-
+    /// Performs the hide operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the hide operation. Visibility: public."]
     pub fn hide(&self) {
-        unsafe {
-            XUnmapWindow(self.display, self.window);
-            XFlush(self.display);
-        }
+        self.hidden.set(true);
+        let _ = self.connection.unmap_window(self.window);
+        let _ = self.connection.flush();
     }
 
-    // ------------------------
-    // Position / Size
-    // ------------------------
+    /// Retained for API parity. X11 window icons are pixel properties rather than
+    /// file paths; loading/decoding an arbitrary image is intentionally left to
+    /// the higher-level crate instead of adding another image dependency here.
+    #[doc = "Sets icon. Visibility: public."]
+    pub fn set_icon(&self, _path: &str) {}
 
-    pub fn reposition(&self, x: i32, y: i32) {
-        unsafe {
-            XMoveWindow(self.display, self.window, x, y);
-            XFlush(self.display);
-        }
-    }
-
-    pub fn resize(&self, width: u32, height: u32) {
-        unsafe {
-            XResizeWindow(self.display, self.window, width, height);
-            XFlush(self.display);
-        }
-    }
-
-    // ------------------------
-    // Minimize / Restore
-    // ------------------------
-
-    pub fn minimize(&self) {
-        // Equivalent: unmap (basic fallback)
-        self.hide();
-    }
-
-    pub fn restore(&self) {
-        self.show();
-    }
-
-    // ------------------------
-    // Maximize (EWMH hint)
-    // ------------------------
-
+    /// Performs the maximize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the maximize operation. Visibility: public."]
     pub fn maximize(&self) {
-        unsafe {
-            let wm_state = XInternAtom(self.display, CString::new("_NET_WM_STATE").unwrap().as_ptr(), 0);
-            let max_horz = XInternAtom(self.display, CString::new("_NET_WM_STATE_MAXIMIZED_HORZ").unwrap().as_ptr(), 0);
-            let max_vert = XInternAtom(self.display, CString::new("_NET_WM_STATE_MAXIMIZED_VERT").unwrap().as_ptr(), 0);
-
-            let mut event = XEvent { pad: [0; 24] };
-
-            let data = &mut event.pad;
-
-            data[0] = 33; // ClientMessage
-            data[1] = self.window;
-            data[2] = wm_state;
-            data[3] = 1; // _NET_WM_STATE_ADD
-            data[4] = max_horz;
-            data[5] = max_vert;
-
-            XSendEvent(
-                self.display,
-                self.window,
-                0,
-                SUBSTRUCTURE_REDIRECT_MASK | SUBSTRUCTURE_NOTIFY_MASK,
-                &mut event,
-            );
-
-            XFlush(self.display);
-        }
+        self.send_net_wm_state(
+            1,
+            self.atoms.net_wm_state_maximized_horz,
+            self.atoms.net_wm_state_maximized_vert
+        );
+        self.maximized.set(true);
     }
 
-    // ------------------------
-    // Decorations (WM hint)
-    // ------------------------
+    /// Performs the minimize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the minimize operation. Visibility: public."]
+    pub fn minimize(&self) {
+        // ICCCM WM_CHANGE_STATE, IconicState = 3.
+        let event = ClientMessageEvent::new(
+            32,
+            self.window,
+            self.atoms.wm_change_state,
+            ClientMessageData::from([3u32, 0, 0, 0, 0])
+        );
+        let _ = self.connection.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event
+        );
+        let _ = self.connection.flush();
+    }
 
+    /// Performs the restore operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the restore operation. Visibility: public."]
+    pub fn restore(&self) {
+        self.hidden.set(false);
+        let _ = self.connection.map_window(self.window);
+        self.send_net_wm_state(
+            0,
+            self.atoms.net_wm_state_maximized_horz,
+            self.atoms.net_wm_state_maximized_vert
+        );
+        self.maximized.set(false);
+        let _ = self.connection.flush();
+    }
+
+    /// Performs the reposition operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the reposition operation. Visibility: public."]
+    pub fn reposition(&self, x: i32, y: i32) {
+        let _ = self.connection.configure_window(self.window, &ConfigureWindowAux::new().x(x).y(y));
+        let _ = self.connection.flush();
+    }
+
+    /// Performs the resize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the resize operation. Visibility: public."]
+    pub fn resize(&self, width: u32, height: u32) {
+        if width == 0 || height == 0 || width > (u16::MAX as u32) || height > (u16::MAX as u32) {
+            return;
+        }
+        let _ = self.connection.configure_window(
+            self.window,
+            &ConfigureWindowAux::new().width(width).height(height)
+        );
+        self.client_size.set((width, height));
+        if !self.resizable.get() {
+            self.apply_size_hints();
+        }
+        let _ = self.connection.flush();
+    }
+
+    /// Performs the show operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the show operation. Visibility: public."]
+    pub fn show(&self) {
+        self.hidden.set(false);
+        let _ = self.connection.map_window(self.window);
+        let _ = self.connection.flush();
+    }
+
+    /// Sets decorations.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets decorations. Visibility: public."]
     pub fn set_decorations(&self, enabled: bool) {
-        // This uses Motif hints (widely supported but not guaranteed)
-        #[repr(C)]
-        struct MotifHints {
-            flags: u64,
-            functions: u64,
-            decorations: u64,
-            input_mode: i64,
-            status: u64,
-        }
-
-        const MWM_HINTS_DECORATIONS: u64 = 1 << 1;
-
-        unsafe {
-            let hints = MotifHints {
-                flags: MWM_HINTS_DECORATIONS,
-                functions: 0,
-                decorations: if enabled { 1 } else { 0 },
-                input_mode: 0,
-                status: 0,
-            };
-
-            let atom = XInternAtom(
-                self.display,
-                CString::new("_MOTIF_WM_HINTS").unwrap().as_ptr(),
-                0,
-            );
-
-            // XChangeProperty not declared earlier → inline declare
-            unsafe extern "C" {
-                fn XChangeProperty(
-                    display: Display,
-                    window: WindowHandle,
-                    property: Atom,
-                    type_: Atom,
-                    format: i32,
-                    mode: i32,
-                    data: *const u8,
-                    nelements: i32,
-                );
-            }
-
-            XChangeProperty(
-                self.display,
-                self.window,
-                atom,
-                atom,
-                32,
-                0,
-                &hints as *const _ as *const u8,
-                5,
-            );
-
-            XFlush(self.display);
-        }
+        self.decorations.set(enabled);
+        self.apply_motif_hints();
     }
 
-    // ------------------------
-    // Unsupported (No-ops)
-    // ------------------------
-
-    pub fn set_maximizable(&self, _enabled: bool) {
-        // Not controllable in X11
+    /// Sets maximizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets maximizable. Visibility: public."]
+    pub fn set_maximizable(&self, enabled: bool) {
+        self.maximizable.set(enabled);
+        self.apply_motif_hints();
     }
 
-    pub fn set_minimizable(&self, _enabled: bool) {
-        // Not controllable in X11
+    /// Sets minimizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets minimizable. Visibility: public."]
+    pub fn set_minimizable(&self, enabled: bool) {
+        self.minimizable.set(enabled);
+        self.apply_motif_hints();
     }
 
+    /// Sets resizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets resizable. Visibility: public."]
     pub fn set_resizable(&self, enabled: bool) {
-        unsafe {
-            let hints = XAllocSizeHints();
-            if hints.is_null() {
-                return;
-            }
-
-            if enabled {
-                // Allow resizing → clear min/max constraints
-                (*hints).flags = 0;
-            } else {
-                // Lock size → min == max
-                (*hints).flags = (1 << 4) | (1 << 5); // PMinSize | PMaxSize
-
-                (*hints).min_width = self.size.0 as i32;
-                (*hints).min_height = self.size.1 as i32;
-                (*hints).max_width = self.size.0 as i32;
-                (*hints).max_height = self.size.1 as i32;
-            }
-
-            XSetWMNormalHints(self.display, self.window, hints);
-            XFree(hints as *mut _);
-        }
+        self.resizable.set(enabled);
+        self.apply_motif_hints();
+        self.apply_size_hints();
     }
-}
 
-#[repr(C)]
-struct XSizeHints {
-    flags: i64,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    min_width: i32,
-    min_height: i32,
-    max_width: i32,
-    max_height: i32,
-    width_inc: i32,
-    height_inc: i32,
-    min_aspect_num: i32,
-    min_aspect_den: i32,
-    max_aspect_num: i32,
-    max_aspect_den: i32,
-    base_width: i32,
-    base_height: i32,
-    win_gravity: i32,
-}
+    /// Performs the send net wm state operation.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Implements the send net wm state operation. Visibility: private/internal."]
+    fn send_net_wm_state(&self, action: u32, first: u32, second: u32) {
+        let event = ClientMessageEvent::new(
+            32,
+            self.window,
+            self.atoms.net_wm_state,
+            ClientMessageData::from([action, first, second, 1, 0])
+        );
+        let _ = self.connection.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event
+        );
+        let _ = self.connection.flush();
+    }
 
-#[link(name = "X11")]
-unsafe extern "C" {
-    fn XAllocSizeHints() -> *mut XSizeHints;
-    fn XSetWMNormalHints(display: super::Display, window: super::WindowHandle, hints: *mut XSizeHints);
-    fn XFree(data: *mut std::ffi::c_void);
+    /// Performs the apply motif hints operation.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Implements the apply motif hints operation. Visibility: private/internal."]
+    fn apply_motif_hints(&self) {
+        /// Constant used for mwm hints functions.
+        ///
+        /// Visibility: **private**.
+        const MWM_HINTS_FUNCTIONS: u32 = 1 << 0;
+        /// Constant used for mwm hints decorations.
+        ///
+        /// Visibility: **private**.
+        const MWM_HINTS_DECORATIONS: u32 = 1 << 1;
+        /// Constant used for mwm func resize.
+        ///
+        /// Visibility: **private**.
+        const MWM_FUNC_RESIZE: u32 = 1 << 1;
+        /// Constant used for mwm func move.
+        ///
+        /// Visibility: **private**.
+        const MWM_FUNC_MOVE: u32 = 1 << 2;
+        /// Constant used for mwm func minimize.
+        ///
+        /// Visibility: **private**.
+        const MWM_FUNC_MINIMIZE: u32 = 1 << 3;
+        /// Constant used for mwm func maximize.
+        ///
+        /// Visibility: **private**.
+        const MWM_FUNC_MAXIMIZE: u32 = 1 << 4;
+        /// Constant used for mwm func close.
+        ///
+        /// Visibility: **private**.
+        const MWM_FUNC_CLOSE: u32 = 1 << 5;
+        /// Constant used for mwm decor all.
+        ///
+        /// Visibility: **private**.
+        const MWM_DECOR_ALL: u32 = 1 << 0;
+
+        let mut functions = MWM_FUNC_MOVE | MWM_FUNC_CLOSE;
+        if self.resizable.get() {
+            functions |= MWM_FUNC_RESIZE;
+        }
+        if self.minimizable.get() {
+            functions |= MWM_FUNC_MINIMIZE;
+        }
+        if self.maximizable.get() {
+            functions |= MWM_FUNC_MAXIMIZE;
+        }
+
+        let decorations = if self.decorations.get() { MWM_DECOR_ALL } else { 0 };
+        let data = [MWM_HINTS_FUNCTIONS | MWM_HINTS_DECORATIONS, functions, decorations, 0, 0];
+        let _ = self.connection.change_property32(
+            PropMode::REPLACE,
+            self.window,
+            self.atoms.motif_wm_hints,
+            self.atoms.motif_wm_hints,
+            &data
+        );
+        let _ = self.connection.flush();
+    }
+
+    /// Performs the apply size hints operation.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Implements the apply size hints operation. Visibility: private/internal."]
+    fn apply_size_hints(&self) {
+        let mut hints = WmSizeHints::new();
+        if !self.resizable.get() {
+            let (w, h) = self.client_size.get();
+            hints.min_size = Some((w as i32, h as i32));
+            hints.max_size = Some((w as i32, h as i32));
+        }
+        let _ = hints.set_normal_hints(&self.connection, self.window);
+        let _ = self.connection.flush();
+    }
 }

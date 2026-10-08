@@ -1,0 +1,11 @@
+# P575-P601 advanced performance experiments
+
+The realtime and offline execution modes are intentionally separated. Realtime playback remains latency-first: compressed decoders feed bounded per-source SPSC PCM queues through the decoder-worker pool, and the mixer consumes only available PCM. Offline decoding enables a separate bounded `ReadAheadFile` pipeline so compressed I/O can overlap decode. Independent files can be decoded across a bounded worker count, while channel-lane postprocessing is parallelized only when a decoded block exceeds `channel_parallel_threshold_frames`.
+
+Per-stream specialization is selected outside inner loops: `PcmDecodePlan` caches the bit-depth/endian conversion function, `Voice` caches channel-routing and equal-rate/resampling function pointers, and `Mixer` caches the selected limiter kernel. Q32 fixed-point phase/timeline arithmetic remains the normal playback implementation. DSP stays f32 where it affects hot mixing/transforms; f64 is retained for cold/UI timestamp conversion or setup math where precision is useful.
+
+`fast-math` is an opt-in feature with a 0.006 documented maximum absolute error bound for the current soft-limiter approximation. The default feature set does not enable it, preserving the exact/default equation. `prefetch` is also off by default; it contains codec-specific MP3 pow43/Huffman and Vorbis lookup-table prefetch distances and is evaluated with `benchmark_prefetch.sh` before adoption. This prevents an unmeasured prefetch experiment from changing portable default behavior.
+
+Vorbis IMDCT uses wider blocked butterflies for cache locality. FLAC LPC coefficients already use fixed stack scratch for tiny bounded state; `mata-audio-memory-strategies` additionally compares small stack scratch with heap scratch and a monotonic setup arena against nested setup allocations. These are experiments rather than unconditional policy changes.
+
+`mmap` depends on `memmap2`, is optional, implies `offline`, and is never selected by automatic decoding or realtime playback. `benchmark_offline_pipeline.sh` compares normal buffered decode, bounded read-ahead and mmap on the same input. `benchmark_math_strategies.sh` records exact/fast-math error and the stack/arena experiments.

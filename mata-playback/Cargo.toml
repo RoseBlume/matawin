@@ -1,0 +1,94 @@
+[package]
+name = "mata-playback"
+version = "0.1.0"
+description = "Low-level realtime audio I/O for Linux (ALSA/PulseAudio), Windows (WASAPI), and Android (AAudio)."
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+
+[features]
+# Linux includes both ALSA and PulseAudio by default. ALSA is always compiled on Linux;
+# disabling default features leaves an ALSA-only Linux build.
+default = ["pulseaudio"]
+
+# Enables backend-native realtime/low-latency behavior without pulling in any extra
+# realtime scheduling crates. Linux uses pthread scheduling through libc, Windows uses
+# Win32 thread priority APIs, and Android keeps AAudio low-latency mode.
+realtime = []
+
+# PulseAudio host in addition to ALSA on Linux.
+pulseaudio = ["dep:pulseaudio", "dep:futures", "dep:portable-atomic"]
+
+[dependencies]
+dasp_sample = "0.11"
+
+[target.'cfg(all(target_os = "linux", not(target_has_atomic = "64")))'.dependencies]
+portable-atomic = { version = "1", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.11"
+libc = "0.2"
+pulseaudio = { version = "0.3", optional = true }
+futures = { version = "0.3", optional = true }
+
+# Windows intentionally has no ASIO/JACK/realtime helper dependencies.
+# `windows` and `windows-core` must stay on the same minor version.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Foundation",
+    "Win32_Devices_Properties",
+    "Win32_Media_KernelStreaming",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Performance",
+    "Win32_Security",
+    "Win32_System_SystemServices",
+    "Win32_System_Variant",
+    "Win32_Media_Multimedia",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
+# Android backend kept as AAudio/NDK.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false, features = [
+    "audio",
+    "api-level-26",
+] }
+ndk-context = "0.1"
+jni = "0.22"
+libc = "0.2"
+num-derive = "0.4"
+num-traits = "0.2"
+
+[dev-dependencies]
+anyhow = "1.0"
+hound = "3.5"
+ringbuf = "0.4"
+clap = { version = ">=4.6, <5", features = ["derive"] }
+
+[[example]]
+name = "beep"
+
+[[example]]
+name = "enumerate"
+
+[[example]]
+name = "feedback"
+
+[[example]]
+name = "record_wav"
+
+[[example]]
+name = "synth_tones"
+
+[package.metadata.docs.rs]
+features = ["pulseaudio", "realtime"]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-linux-android",
+]

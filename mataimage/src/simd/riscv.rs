@@ -1,5 +1,10 @@
+//! RISC-V SIMD/vector implementations used by accelerated decoding paths.
+//!
+//! These helpers provide architecture-specific acceleration for supported RISC-V targets.
+
 use core::arch::riscv::*;
 #[inline]
+/// Converts packed 16-bit BGRA channel data into the corresponding RGBA ordering.
 pub unsafe fn bgra_to_rgba_16(src: *const u8, dst: *mut u8) -> bool {
 
     // -------- Nightly RVV path --------

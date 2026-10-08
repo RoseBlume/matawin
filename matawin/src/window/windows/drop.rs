@@ -1,18 +1,25 @@
-use super::{HWND, HDC};
-unsafe extern "system" {
-    fn DestroyWindow(hwnd: HWND) -> i32;
-    fn ReleaseDC(hwnd: HWND, hdc: HDC) -> i32;
-}
+//! Implements the `drop` module.
+//!
+//! This module documents both public API items and internal implementation details.
+
+use windows::Win32::UI::WindowsAndMessaging::{ DestroyIcon, DestroyWindow };
 
 impl Drop for super::PlatformWindow {
+    /// Performs the drop operation.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Implements the drop operation. Visibility: private/internal."]
     fn drop(&mut self) {
+        // Release device-dependent Direct2D resources before destroying the HWND.
+        self.renderer.shutdown();
+
         unsafe {
-            if !self.hdc.is_null() {
-                ReleaseDC(self.hwnd, self.hdc);
+            if let Some(icon) = self.icon.take() {
+                let _ = DestroyIcon(icon);
             }
 
-            if !self.hwnd.is_null() {
-                DestroyWindow(self.hwnd);
+            if !self.hwnd.is_invalid() {
+                let _ = DestroyWindow(self.hwnd);
             }
         }
     }

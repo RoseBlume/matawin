@@ -1,166 +1,161 @@
+//! Implements the `show` module.
+//!
+//! This module documents both public API items and internal implementation details.
 
+use std::ffi::OsStr;
+use std::iter::once;
+use std::os::windows::ffi::OsStrExt;
 
-use super::HWND;
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::{ LPARAM, RECT, WPARAM },
+        UI::WindowsAndMessaging::{
+            HICON,
+            AdjustWindowRectEx,
+            DestroyIcon,
+            GetWindowLongPtrW,
+            LoadImageW,
+            SendMessageW,
+            SetWindowLongPtrW,
+            SetWindowPos,
+            ShowWindow,
+            GWL_STYLE,
+            ICON_BIG,
+            ICON_SMALL,
+            IMAGE_ICON,
+            LR_DEFAULTSIZE,
+            LR_LOADFROMFILE,
+            SW_HIDE,
+            SW_MAXIMIZE,
+            SW_MINIMIZE,
+            SW_RESTORE,
+            SW_SHOW,
+            SWP_FRAMECHANGED,
+            SWP_NOMOVE,
+            SWP_NOSIZE,
+            SWP_NOZORDER,
+            WM_SETICON,
+            WS_CAPTION,
+            WS_MAXIMIZEBOX,
+            WS_MINIMIZEBOX,
+            WS_THICKFRAME,
+            WINDOW_EX_STYLE,
+            WINDOW_STYLE,
+        },
+    },
+};
 
-use std::ffi::CString;
-use std::ptr::null_mut;
-
-// Hides the window and activates another window.
-const SW_HIDE: i32 = 0;
-// Activates and displays a window. If the window is minimized or maximized, the system restores it to its original size and position. An application should specify this flag when displaying the window for the first time.
-// const SW_NORMAL: i32 = 1;
-// // Activates the window and displays it as a minimized window.
-// const SW_SHOWMINIMIZED: i32 = 2;
-// // Activates the window and displays it as a maximized window.
-// const SW_SHOWMAXIMIZED: i32 = 3;
-// Displays a window in its most recent size and position. This value is similar to SW_SHOWNORMAL, except that the window is not activated.
-const SW_MAXIMIZE: i32 = 3;
-// // Activates the window and displays it in its current size and position. The window is not activated.
-// const SW_SHOWNOACTIVATE: i32 = 4;
-// Activates the window and displays it in its current size and position.
-const SW_SHOW: i32 = 5;
-// Minimizes the specified window and activates the next top-level window in the Z order.
-const SW_MINIMIZE: i32 = 6;
-// Displays the window as a minimized window. This value is similar to SW_SHOWMINIMIZED, except the window is not activated.
-// const SW_SHOWMINNOACTIVE: i32 = 7;
-// // Displays the window in its current size and position. This value is similar to SW_SHOW, except that the window is not activated.
-// const SW_SHOWNA: i32 = 8;
-// Activates and displays the window. If the window is minimized or maximized, the system restores it to its original size and position. An application should specify this flag when restoring a minimized window.
-const SW_RESTORE: i32 = 9;
-// // Activates the window and displays it in its current size and position. If the window is minimized or maximized, the system restores it to its original size and position. An application should specify this flag when displaying the window for the first time.
-// const SW_SHOWDEFAULT: i32 = 10;
-// // Minimizes a window, even if the thread that owns the window is not responding. This flag should only be used when minimizing windows from a different thread.
-// const SW_FORCEMINIMIZE: i32 = 11;
-
-const SWP_NOZORDER: u32 = 0x0004;
-const SWP_NOMOVE: u32 = 0x0002;
-const SWP_NOSIZE: u32 = 0x0001;
-
-#[repr(C)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+/// Implements wide null.
+///
+/// Visibility: **private**.
+#[doc = "Implements the wide null operation. Visibility: private/internal."]
+fn wide_null(value: &str) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(once(0)).collect()
 }
-
-unsafe extern "system" {
-    fn ShowWindow(hwnd: HWND, nCmdShow: i32) -> i32;
-    fn AdjustWindowRect(rect: *mut RECT, style: u32, menu: i32) -> i32;
-    fn GetWindowLongA(hwnd: HWND, index: i32) -> i32;
-    fn SetWindowLongA(hwnd: HWND, index: i32, value: i32) -> i32;
-    fn SetWindowPos(
-        hWnd: HWND,
-        hWndInsertAfter: HWND,
-        X: i32,
-        Y: i32,
-        cx: i32,
-        cy: i32,
-        uFlags: u32,
-    ) -> i32;
-    fn SendMessageA(
-        hwnd: HWND,
-        msg: u32,
-        wparam: usize,
-        lparam: isize,
-    ) -> isize;
-
-    fn LoadImageA(
-        hInst: *mut std::ffi::c_void,
-        name: *const i8,
-        type_: u32,
-        cx: i32,
-        cy: i32,
-        flags: u32,
-    ) -> *mut std::ffi::c_void;
-
-}
-
-const IMAGE_ICON: u32 = 1;
-const LR_LOADFROMFILE: u32 = 0x00000010;
-const GWL_STYLE: i32 = -16;
-const SWP_FRAMECHANGED: u32 = 0x0020;
-const WS_MAXIMIZEBOX: u32 = 0x00010000;
-const WS_MINIMIZEBOX: u32 = 0x00020000;
-const WS_THICKFRAME: u32 = 0x00040000; // resizable border
-const WS_CAPTION: u32 = 0x00C00000;    // required for buttons
-
-
-const WM_SETICON: u32 = 0x0080;
-
-const ICON_SMALL: usize = 0;
-const ICON_BIG: usize = 1;
-
-// const IMAGE_ICON: u32 = 1;
-
-// const LR_LOADFROMFILE: u32 = 0x00000010;
-const LR_DEFAULTSIZE: u32 = 0x00000040;
 
 impl super::PlatformWindow {
+    /// Performs the hide operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the hide operation. Visibility: public."]
     pub fn hide(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_HIDE);
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
     }
 
+    /// Sets icon.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets icon. Visibility: public."]
     pub fn set_icon(&self, path: &str) {
-
-        let path = CString::new(path).unwrap();
+        let path = wide_null(path);
 
         unsafe {
-            let hicon = LoadImageA(
-                null_mut(),
-                path.as_ptr(),
+            let handle = LoadImageW(
+                None,
+                PCWSTR(path.as_ptr()),
                 IMAGE_ICON,
                 0,
                 0,
-                LR_LOADFROMFILE | LR_DEFAULTSIZE,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE
+            ).expect("LoadImageW failed to load the window icon");
+
+            let icon = HICON(handle.0);
+
+            SendMessageW(
+                self.hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(icon.0 as isize))
+            );
+            SendMessageW(
+                self.hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(icon.0 as isize))
             );
 
-            if !hicon.is_null() {
-                // Set big icon (taskbar / alt-tab)
-                SendMessageA(self.hwnd, WM_SETICON, ICON_BIG as usize, hicon as isize);
-
-                // Set small icon (title bar)
-                SendMessageA(self.hwnd, WM_SETICON, ICON_SMALL as usize, hicon as isize);
+            if let Some(old) = self.icon.replace(Some(icon)) {
+                let _ = DestroyIcon(old);
             }
         }
     }
 
+    /// Performs the maximize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the maximize operation. Visibility: public."]
     pub fn maximize(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_MAXIMIZE);
+            let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
         }
+        self.refresh_client_size();
     }
 
+    /// Performs the minimize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the minimize operation. Visibility: public."]
     pub fn minimize(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_MINIMIZE);
+            let _ = ShowWindow(self.hwnd, SW_MINIMIZE);
         }
-    }
-    pub fn restore(&self) {
-        unsafe {
-            ShowWindow(self.hwnd, SW_RESTORE);
-        }
+        self.refresh_client_size();
     }
 
+    /// Performs the restore operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the restore operation. Visibility: public."]
+    pub fn restore(&self) {
+        unsafe {
+            let _ = ShowWindow(self.hwnd, SW_RESTORE);
+        }
+        self.refresh_client_size();
+    }
+
+    /// Performs the reposition operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the reposition operation. Visibility: public."]
     pub fn reposition(&self, x: i32, y: i32) {
         unsafe {
-            SetWindowPos(
-                self.hwnd,
-                std::ptr::null_mut(),
-                x,
-                y,
-                0,
-                0,
-                SWP_NOZORDER | SWP_NOSIZE,
+            SetWindowPos(self.hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE).expect(
+                "SetWindowPos failed while repositioning the window"
             );
         }
     }
 
+    /// Performs the resize operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the resize operation. Visibility: public."]
     pub fn resize(&self, width: u32, height: u32) {
         unsafe {
-            let style = GetWindowLongA(self.hwnd, GWL_STYLE) as u32;
+            let style = WINDOW_STYLE(GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32);
+            let ex_style = WINDOW_EX_STYLE(0);
 
             let mut rect = RECT {
                 left: 0,
@@ -169,78 +164,107 @@ impl super::PlatformWindow {
                 bottom: height as i32,
             };
 
-            AdjustWindowRect(&mut rect, style, 0);
-
-            let w = rect.right - rect.left;
-            let h = rect.bottom - rect.top;
+            AdjustWindowRectEx(&mut rect, style, false, ex_style).expect(
+                "AdjustWindowRectEx failed while resizing the window"
+            );
 
             SetWindowPos(
                 self.hwnd,
-                std::ptr::null_mut(),
+                None,
                 0,
                 0,
-                w,
-                h,
-                SWP_NOZORDER | SWP_NOMOVE,
-            );
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOZORDER | SWP_NOMOVE
+            ).expect("SetWindowPos failed while resizing the window");
         }
+
+        // resize() specifies the desired client area, so this avoids an extra
+        // GetClientRect call in the common explicit-resize path.
+        self.client_size.set((width, height));
     }
+
+    /// Performs the show operation.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Implements the show operation. Visibility: public."]
     pub fn show(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_SHOW);
+            let _ = ShowWindow(self.hwnd, SW_SHOW);
         }
+        self.refresh_client_size();
     }
 
-    fn update_style(&self, add: u32, remove: u32) {
+    /// Updates style.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Updates style. Visibility: private/internal."]
+    fn update_style(&self, add: WINDOW_STYLE, remove: WINDOW_STYLE) {
         unsafe {
-            let mut style = GetWindowLongA(self.hwnd, GWL_STYLE) as u32;
+            let current = GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32;
+            let updated = (current | add.0) & !remove.0;
 
-            style |= add;
-            style &= !remove;
+            SetWindowLongPtrW(self.hwnd, GWL_STYLE, updated as isize);
 
-            SetWindowLongA(self.hwnd, GWL_STYLE, style as i32);
-
-            // Apply changes
             SetWindowPos(
                 self.hwnd,
-                std::ptr::null_mut(),
+                None,
                 0,
                 0,
                 0,
                 0,
-                SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
-            );
+                SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED
+            ).expect("SetWindowPos failed while applying a window style change");
         }
-    }   
 
+        self.refresh_client_size();
+    }
+
+    /// Sets decorations.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets decorations. Visibility: public."]
     pub fn set_decorations(&self, enabled: bool) {
         if enabled {
-            self.update_style(WS_CAPTION, 0);
+            self.update_style(WS_CAPTION, WINDOW_STYLE(0));
         } else {
-            self.update_style(0, WS_CAPTION);
+            self.update_style(WINDOW_STYLE(0), WS_CAPTION);
         }
     }
+
+    /// Sets maximizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets maximizable. Visibility: public."]
     pub fn set_maximizable(&self, enabled: bool) {
         if enabled {
-            self.update_style(WS_MAXIMIZEBOX, 0);
+            self.update_style(WS_MAXIMIZEBOX, WINDOW_STYLE(0));
         } else {
-            self.update_style(0, WS_MAXIMIZEBOX);
+            self.update_style(WINDOW_STYLE(0), WS_MAXIMIZEBOX);
         }
     }
+
+    /// Sets minimizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets minimizable. Visibility: public."]
     pub fn set_minimizable(&self, enabled: bool) {
         if enabled {
-            self.update_style(WS_MINIMIZEBOX, 0);
+            self.update_style(WS_MINIMIZEBOX, WINDOW_STYLE(0));
         } else {
-            self.update_style(0, WS_MINIMIZEBOX);
+            self.update_style(WINDOW_STYLE(0), WS_MINIMIZEBOX);
         }
     }
+
+    /// Sets resizable.
+    ///
+    /// Visibility: **public**.
+    #[doc = "Sets resizable. Visibility: public."]
     pub fn set_resizable(&self, enabled: bool) {
         if enabled {
-            self.update_style(WS_THICKFRAME, 0);
+            self.update_style(WS_THICKFRAME, WINDOW_STYLE(0));
         } else {
-            self.update_style(0, WS_THICKFRAME);
+            self.update_style(WINDOW_STYLE(0), WS_THICKFRAME);
         }
     }
-
 }
-

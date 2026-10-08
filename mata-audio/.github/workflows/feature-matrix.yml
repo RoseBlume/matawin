@@ -1,0 +1,18 @@
+name: feature-matrix
+on: [push, pull_request]
+jobs:
+  matrix:
+    strategy:
+      matrix:
+        features: ["", "simd", "all-codecs", "all-demuxers", "all-metadata", "auto-detect", "codec-flac,simd", "codec-mp3,simd", "codec-vorbis,simd"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --no-default-features --features "${{ matrix.features }}"
+  default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test

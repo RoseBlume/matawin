@@ -1,0 +1,38 @@
+name: performance-smoke
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'performance/**'
+jobs:
+  native-smoke:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile and test portable decoder surface
+        run: cargo test --profile perf --no-default-features --features "all-codecs,all-demuxers,all-metadata,auto-detect,simd,offline"
+      - name: Decoder performance smoke
+        shell: bash
+        run: performance/scripts/platform_smoke.sh
+  arm64-compile-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - run: cargo check --target aarch64-unknown-linux-gnu --no-default-features --features "all-codecs,all-demuxers,all-metadata,auto-detect,simd,offline"
+  android-compile-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - run: cargo check --target aarch64-linux-android --no-default-features --features "all-codecs,all-demuxers,all-metadata,auto-detect,simd,offline"

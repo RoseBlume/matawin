@@ -1,44 +1,29 @@
+//! Demonstrates the simple MataWin example.
+//!
+//! Example code is not part of the library API, but its functions are documented for completeness.
+
 use matawin::{
-    Window, Menu, TextAlign,
-    colors::{WHITE, RED, BLACK},
-    sprites::{SpriteType, SpriteRender, Sprite, Vector},
-    events::{WindowEvent, Key},
+    Framebuffer,
+    Window,
+    events::WindowEvent,
 };
-use matawin::window::AppWindow;
+
+/// Demonstrates or supports `main`.
+///
+/// Visibility: **private to the example binary**.
 fn main() {
-    let size = (800, 600);
-    let mut window = AppWindow::new( "matawin", size)
-        .with_close_handler(|| {
-            println!("Window closed");
-            std::process::exit(0);
-        })
-        .with_resize_handler(|w, h| {
-            println!("Window resized to {}x{}", w, h);
-        })
-        .with_key_pressed_handler(|key| {
-            println!("Key pressed: {:?}", key);
-        })
-        .with_repositioned_handler(|x, y| {
-            println!("Window repositioned to {}, {}", x, y);
-        })
-        .with_maximized_handler(|w, h| {
-            println!("Window maximized to {}x{}", w, h);
-        })
-        .with_restored_handler(|w, h| {
-            println!("Window restored to {}x{}", w, h);
-        })
-        .with_minimized_handler(|| {
-            println!("Window minimized");
-        });
-    window.set_resizable(false);
-    window.set_maximizable(false);
+    let mut window = Window::new("matawin", (800, 600));
+    let framebuffer = Framebuffer::from_color(800, 600, 0xff10_1820);
+    let mut events = Vec::with_capacity(16);
 
-
-    // fb.clear(0xFF00FF00);
-    window.set_decorations(true);
-    window.set_title("matawin - Simple Example");
     loop {
-        window.handle_events();
-        window.present();
+        window.poll_events_into(&mut events);
+        for event in events.iter().copied() {
+            if matches!(event, WindowEvent::Close) {
+                return;
+            }
+        }
+
+        window.present(&framebuffer);
     }
 }

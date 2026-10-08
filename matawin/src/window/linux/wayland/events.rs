@@ -1,74 +1,42 @@
-use crate::events::{Key, WindowEvent};
+//! Implements the `events` module.
+//!
+//! This module documents both public API items and internal implementation details.
 
-pub struct Handlers {
-    pub on_close: Option<Box<dyn FnMut()>>,
-    pub on_resized: Option<Box<dyn FnMut(u32, u32)>>,
-    pub on_key_pressed: Option<Box<dyn FnMut(Key)>>,
-}
+impl super::PlatformWindow {
+    /// Pumps all currently available Wayland events without blocking.
+    ///
+    /// Pending events are dispatched first. The queue then repeatedly prepares a
+    /// Wayland socket read and calls `ReadEventsGuard::read()`. In the pure-Rust
+    /// Wayland backend this read returns `WouldBlock` when the socket currently has
+    /// no data, so the loop can drain ready events without a separate polling crate.
+    #[doc = "Implements the pump events operation. Visibility: public."]
+    pub fn pump_events(&self) {
+        let mut queue = self.event_queue.borrow_mut();
+        let mut state = self.state.borrow_mut();
 
-impl Default for Handlers {
-    fn default() -> Self {
-        Self {
-            on_close: None,
-            on_resized: None,
-            on_key_pressed: None,
-        }
-    }
-}
+        let _ = queue.dispatch_pending(&mut state);
+        let _ = queue.flush();
 
-impl super::Window {
-    pub fn with_close_handler<F: FnMut() + 'static>(mut self, f: F) -> Self {
-        self.handlers.on_close = Some(Box::new(f));
-        self
-    }
-
-    pub fn with_resize_handler<F: FnMut(u32, u32) + 'static>(mut self, f: F) -> Self {
-        self.handlers.on_resized = Some(Box::new(f));
-        self
-    }
-
-    pub fn with_key_handler<F: FnMut(Key) + 'static>(mut self, f: F) -> Self {
-        self.handlers.on_key_pressed = Some(Box::new(f));
-        self
-    }
-
-    pub fn poll_events(&self) -> Vec<WindowEvent> {
-        self.pump_events();
-
-        if let Some(queue) = super::EVENT_QUEUE.get() {
-            let mut q = queue.lock().unwrap();
-            let events = q.clone();
-            q.clear();
-            return events;
-        }
-
-        Vec::new()
-    }
-
-    pub fn handle_events(&mut self) {
-        let events = self.poll_events();
-
-        for event in events {
-            match event {
-                WindowEvent::Close => {
-                    if let Some(cb) = self.handlers.on_close.as_mut() {
-                        cb();
-                    }
+        loop {
+            let Some(guard) = queue.prepare_read() else {
+                let dispatched = queue.dispatch_pending(&mut state).unwrap_or(0);
+                if dispatched == 0 {
+                    break;
                 }
+                continue;
+            };
 
-                WindowEvent::Resized(w, h) => {
-                    if let Some(cb) = self.handlers.on_resized.as_mut() {
-                        cb(w, h);
-                    }
+            match guard.read() {
+                Ok(_) => {
+                    let _ = queue.dispatch_pending(&mut state);
                 }
-
-                WindowEvent::KeyPressed(key) => {
-                    if let Some(cb) = self.handlers.on_key_pressed.as_mut() {
-                        cb(key);
-                    }
+                Err(_) => {
+                    // With no immediately available socket data the Rust Wayland
+                    // backend reports WouldBlock. Other read failures likewise end
+                    // this pump; a later call can retry or the connection will fail
+                    // through the normal Wayland error path.
+                    break;
                 }
-
-                _ => {}
             }
         }
     }

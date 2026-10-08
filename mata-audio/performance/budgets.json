@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "status": "provisional: enforce on calibrated benchmark host",
+  "max_decode_allocations_per_frame": 100,
+  "max_decode_peak_rss_kib": 524288,
+  "max_open_latency_ns": 1000000000,
+  "min_realtime_factor": {
+    "pcm": 1.0,
+    "flac": 1.0,
+    "mp1": 1.0,
+    "mp2": 1.0,
+    "mp3": 1.0,
+    "vorbis": 1.0
+  },
+  "playback": {
+    "max_mixer_cpu_percent": 30.0,
+    "max_underrun_events_per_hour": 0,
+    "max_command_to_audio_ns_p95": 50000000
+  },
+  "timeline": {
+    "max_open_ns": 1000000000,
+    "max_native_seek_ns_p95": 100000000,
+    "max_loop_boundary_gap_samples": 0
+  },
+  "notes": [
+    "These initial thresholds are guardrails rather than measured performance claims.",
+    "Mixer CPU, underrun rate, command latency, native seek p95 and loop-gap measurements need device-backed result files; synthetic timings do not substitute.",
+    "Calibrate thresholds and pin the hardware/software configuration before baseline promotion."
+  ]
+}

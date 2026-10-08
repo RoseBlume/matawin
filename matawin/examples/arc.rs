@@ -1,3 +1,7 @@
+//! Demonstrates the arc MataWin example.
+//!
+//! Example code is not part of the library API, but its functions are documented for completeness.
+
 use matawin::{
     Window, Menu, TextAlign,
     colors::{WHITE, RED, BLACK},
@@ -12,7 +16,7 @@ const ASSET_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets"
 );
-const IMAGE_FORMAT: &str = "tga";
+const IMAGE_FORMAT: &str = "tiff";
 // --- Input ---
 #[derive(Default)]
 struct InputState {
@@ -26,6 +30,9 @@ struct InputState {
 }
 
 // --- Utils ---
+/// Demonstrates or supports `remove_menu_text`.
+///
+/// Visibility: **private to the example binary**.
 fn remove_menu_text(window: &mut Window, menu: &Menu, prefix: &str) {
     for i in 0..menu.options.len() {
         window.remove_text(&format!("{}_{}", prefix, i));
@@ -33,12 +40,18 @@ fn remove_menu_text(window: &mut Window, menu: &Menu, prefix: &str) {
 }
 
 // --- Menu Input ---
+/// Demonstrates or supports `handle_menu_input`.
+///
+/// Visibility: **private to the example binary**.
 fn handle_menu_input(input: &InputState, menu: &mut Menu) {
     if input.up { menu.move_up(); }
     if input.down { menu.move_down(); }
 }
 
 // --- Main Menu ---
+/// Demonstrates or supports `main_menu`.
+///
+/// Visibility: **private to the example binary**.
 fn main_menu(window: &mut Window, _bgs: &mut Bgs) -> usize {
     let mut menu = Menu::new(vec!["Play", "Exit"], RED, BLACK);
     window.set_background_color(WHITE);
@@ -106,6 +119,9 @@ fn main_menu(window: &mut Window, _bgs: &mut Bgs) -> usize {
 }
 
 // --- Spawn ---
+/// Demonstrates or supports `spawn_falling`.
+///
+/// Visibility: **private to the example binary**.
 fn spawn_falling(
     window: &mut Window,
     rng: &mut impl Rng,
@@ -130,6 +146,9 @@ fn spawn_falling(
 }
 
 // --- Main ---
+/// Demonstrates or supports `main`.
+///
+/// Visibility: **private to the example binary**.
 fn main() {
     let playlist = vec![
         format!("{}/audio/bgs/Crimson Gate Siege.wav", ASSET_DIR),

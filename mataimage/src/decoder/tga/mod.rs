@@ -1,223 +1,263 @@
-use crate::ImageError;
+//! Truevision TGA image decoding.
 
+use crate::{ImageError, pixels::pack_rgba};
+
+/// Represents a decoded TGA image.
 pub struct Tga {
+    /// Image width in pixels.
     pub width: u32,
+    /// Image height in pixels.
     pub height: u32,
-    pub data: Vec<u8>, // RGBA
+    /// Decoded RGBA8 channel bytes retained by the rich API.
+    pub data: Vec<u8>,
 }
 
 impl Tga {
+    /// Borrows the rich decoder's RGBA8 output bytes without allocating.
+    #[inline]
+    pub fn rgba8_ref(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Moves the rich decoder's RGBA8 output bytes without copying.
+    #[inline]
+    pub fn into_rgba8(self) -> Vec<u8> {
+        self.data
+    }
+
+    /// Consumes the rich decoder and converts its RGBA8 output to the crate's
+    /// canonical packed `0xRRGGBBAA` representation.
+    #[inline]
+    pub fn into_pixels(self) -> Vec<u32> {
+        crate::simd::rgba8_to_vec(&self.data)
+    }
+
+    /// Decodes true-color uncompressed or RLE TGA data.
     pub fn new(bytes: &[u8]) -> Result<Self, ImageError> {
-        if bytes.len() < 18 {
-            return Err(ImageError::new("File too small for TGA header"));
+        let (width, height, pixels) = decode_packed(bytes, None)?;
+        let mut data = Vec::with_capacity(pixels.len() * 4);
+        for pixel in pixels {
+            data.extend_from_slice(&[
+                (pixel >> 24) as u8,
+                (pixel >> 16) as u8,
+                (pixel >> 8) as u8,
+                pixel as u8,
+            ]);
         }
+        Ok(Self { width, height, data })
+    }
+}
 
-        let id_length = bytes[0] as usize;
-        let color_map_type = bytes[1];
-        let image_type = bytes[2];
+/// Lightweight TGA decode that writes packed output directly.
+pub(crate) fn decode_image(
+    bytes: &[u8],
+    options: &crate::DecodeOptions,
+) -> Result<crate::Image, ImageError> {
+    let (width, height, pixels) = decode_packed(bytes, Some(options))?;
+    crate::Image::from_packed_pixels(width, height, pixels, options)
+}
 
-        // We only support truecolor (no palette)
-        if color_map_type != 0 {
-            return Err(ImageError::new("Color-mapped TGA not supported"));
-        }
+fn decode_packed(
+    bytes: &[u8],
+    options: Option<&crate::DecodeOptions>,
+) -> Result<(u32, u32, Vec<u32>), ImageError> {
+    if bytes.len() < 18 {
+        return Err(ImageError::new("File too small for TGA header"));
+    }
+    let id_length = bytes[0] as usize;
+    if bytes[1] != 0 {
+        return Err(ImageError::new("Color-mapped TGA not supported"));
+    }
+    let image_type = bytes[2];
+    let width = u16::from_le_bytes([bytes[12], bytes[13]]) as u32;
+    let height = u16::from_le_bytes([bytes[14], bytes[15]]) as u32;
+    if width == 0 || height == 0 {
+        return Err(ImageError::new("TGA dimensions cannot be zero"));
+    }
+    let pixel_size = match bytes[16] {
+        24 => 3usize,
+        32 => 4usize,
+        _ => return Err(ImageError::new("Only 24/32-bit TGA is supported")),
+    };
+    let descriptor = bytes[17];
+    let origin_top = descriptor & 0x20 != 0;
+    let origin_right = descriptor & 0x10 != 0;
+    let mut offset = 18usize
+        .checked_add(id_length)
+        .ok_or_else(|| ImageError::new("TGA data offset overflow"))?;
+    if offset > bytes.len() {
+        return Err(ImageError::new("TGA ID field is truncated"));
+    }
 
-        let width = u16::from_le_bytes(bytes[12..14].try_into().unwrap()) as u32;
-        let height = u16::from_le_bytes(bytes[14..16].try_into().unwrap()) as u32;
-        let bpp = bytes[16];
-        let descriptor = bytes[17];
-
-        let origin_top = (descriptor & 0x20) != 0;
-
-        let pixel_size = match bpp {
-            24 => 3,
-            32 => 4,
-            _ => return Err(ImageError::new("Only 24/32-bit TGA supported")),
-        };
-
-        let offset = 18 + id_length;
-
-        let pixel_count = (width as usize)
+    let pixel_count = match options {
+        Some(options) => options.checked_pixel_count(width, height)?,
+        None => (width as usize)
             .checked_mul(height as usize)
-            .ok_or_else(|| ImageError::new("Image size overflow"))?;
+            .ok_or_else(|| ImageError::new("TGA image size overflow"))?,
+    };
+    let mut pixels = vec![0u32; pixel_count];
 
-        let mut data = vec![0u8; pixel_count * 4];
+    match image_type {
+        2 => decode_raw(
+            bytes,
+            &mut offset,
+            width as usize,
+            height as usize,
+            pixel_size,
+            origin_top,
+            origin_right,
+            &mut pixels,
+        )?,
+        10 => decode_rle(
+            bytes,
+            &mut offset,
+            width as usize,
+            height as usize,
+            pixel_size,
+            origin_top,
+            origin_right,
+            &mut pixels,
+        )?,
+        _ => return Err(ImageError::new(format!("Unsupported TGA type {image_type}"))),
+    }
 
-        match image_type {
-            2 => {
-                // --- Uncompressed ---
-                Self::decode_raw(
-                    bytes,
-                    offset,
-                    width,
-                    height,
-                    pixel_size,
-                    origin_top,
-                    &mut data,
-                )?;
-            }
-            10 => {
-                // --- RLE ---
-                Self::decode_rle(
-                    bytes,
-                    offset,
-                    width,
-                    height,
-                    pixel_size,
-                    origin_top,
-                    &mut data,
-                )?;
-            }
-            _ => {
-                return Err(ImageError::new(format!(
-                    "Unsupported TGA type {}",
-                    image_type
-                )));
+    Ok((width, height, pixels))
+}
+
+#[inline(always)]
+fn read_pixel(bytes: &[u8], offset: &mut usize, pixel_size: usize) -> Result<u32, ImageError> {
+    let end = offset
+        .checked_add(pixel_size)
+        .ok_or_else(|| ImageError::new("TGA pixel offset overflow"))?;
+    let pixel = bytes
+        .get(*offset..end)
+        .ok_or_else(|| ImageError::new("Unexpected EOF in TGA pixel data"))?;
+    *offset = end;
+    let alpha = if pixel_size == 4 { pixel[3] } else { 255 };
+    Ok(pack_rgba(pixel[2], pixel[1], pixel[0], alpha))
+}
+
+#[inline(always)]
+fn destination_index(
+    encoded_index: usize,
+    width: usize,
+    height: usize,
+    origin_top: bool,
+    origin_right: bool,
+) -> usize {
+    let encoded_y = encoded_index / width;
+    let encoded_x = encoded_index - encoded_y * width;
+    let y = if origin_top { encoded_y } else { height - 1 - encoded_y };
+    let x = if origin_right { width - 1 - encoded_x } else { encoded_x };
+    y * width + x
+}
+
+fn decode_raw(
+    bytes: &[u8],
+    offset: &mut usize,
+    width: usize,
+    height: usize,
+    pixel_size: usize,
+    origin_top: bool,
+    origin_right: bool,
+    out: &mut [u32],
+) -> Result<(), ImageError> {
+    let required = out
+        .len()
+        .checked_mul(pixel_size)
+        .ok_or_else(|| ImageError::new("TGA raw byte count overflow"))?;
+    if bytes.len().saturating_sub(*offset) < required {
+        return Err(ImageError::new("Unexpected EOF in TGA data"));
+    }
+
+    // The overwhelmingly common top-left, left-to-right layout can write one
+    // contiguous destination slice without coordinate arithmetic per pixel.
+    if origin_top && !origin_right {
+        let source = &bytes[*offset..*offset + required];
+        if pixel_size == 4 {
+            crate::simd::bgra8_to_u32(source, out);
+        } else {
+            for (dst, pixel) in out.iter_mut().zip(source.chunks_exact(3)) {
+                *dst = pack_rgba(pixel[2], pixel[1], pixel[0], 255);
             }
         }
-
-        Ok(Self {
-            width,
-            height,
-            data,
-        })
+        *offset += required;
+        return Ok(());
     }
 
-    fn write_pixel(out: &mut [u8], idx: usize, pixel: &[u8]) {
-        let (r, g, b, a) = match pixel.len() {
-            3 => (pixel[2], pixel[1], pixel[0], 255),
-            4 => (pixel[2], pixel[1], pixel[0], pixel[3]),
-            _ => (0, 0, 0, 255),
-        };
-
-        out[idx..idx + 4].copy_from_slice(&[r, g, b, a]);
+    for encoded_index in 0..out.len() {
+        let pixel = read_pixel(bytes, offset, pixel_size)?;
+        let index = destination_index(encoded_index, width, height, origin_top, origin_right);
+        out[index] = pixel;
     }
+    Ok(())
+}
 
-    fn decode_raw(
-        bytes: &[u8],
-        mut offset: usize,
-        width: u32,
-        height: u32,
-        pixel_size: usize,
-        origin_top: bool,
-        out: &mut [u8],
-    ) -> Result<(), ImageError> {
-        for y in 0..height {
-            let dst_y = if origin_top { y } else { height - 1 - y };
-
-            for x in 0..width {
-                if offset + pixel_size > bytes.len() {
-                    return Err(ImageError::new("Unexpected EOF in TGA data"));
-                }
-
-                let pixel = &bytes[offset..offset + pixel_size];
-                offset += pixel_size;
-
-                let o = ((dst_y * width + x) * 4) as usize;
-                Self::write_pixel(out, o, pixel);
-            }
+fn decode_rle(
+    bytes: &[u8],
+    offset: &mut usize,
+    width: usize,
+    height: usize,
+    pixel_size: usize,
+    origin_top: bool,
+    origin_right: bool,
+    out: &mut [u32],
+) -> Result<(), ImageError> {
+    let mut encoded_index = 0usize;
+    while encoded_index < out.len() {
+        let header = *bytes
+            .get(*offset)
+            .ok_or_else(|| ImageError::new("Unexpected EOF in TGA RLE data"))?;
+        *offset += 1;
+        let count = usize::from(header & 0x7f) + 1;
+        let end_index = encoded_index
+            .checked_add(count)
+            .ok_or_else(|| ImageError::new("TGA RLE run overflow"))?;
+        if end_index > out.len() {
+            return Err(ImageError::new("TGA RLE packet exceeds image dimensions"));
         }
 
-        Ok(())
-    }
-
-    fn decode_rle(
-        bytes: &[u8],
-        mut offset: usize,
-        width: u32,
-        height: u32,
-        pixel_size: usize,
-        origin_top: bool,
-        out: &mut [u8],
-    ) -> Result<(), ImageError> {
-        let mut x = 0;
-        let mut y = 0;
-
-        while y < height {
-            if offset >= bytes.len() {
-                return Err(ImageError::new("Unexpected EOF in RLE data"));
-            }
-
-            let header = bytes[offset];
-            offset += 1;
-
-            let count = (header & 0x7F) + 1;
-
-            if (header & 0x80) != 0 {
-                // RLE packet
-                if offset + pixel_size > bytes.len() {
-                    return Err(ImageError::new("Unexpected EOF in RLE pixel"));
-                }
-
-                let pixel = &bytes[offset..offset + pixel_size];
-                offset += pixel_size;
-
-                for _ in 0..count {
-                    let dst_y = if origin_top { y } else { height - 1 - y };
-                    let o = ((dst_y * width + x) * 4) as usize;
-
-                    Self::write_pixel(out, o, pixel);
-
-                    x += 1;
-                    if x >= width {
-                        x = 0;
-                        y += 1;
-                        if y >= height {
-                            break;
-                        }
-                    }
-                }
+        if header & 0x80 != 0 {
+            let pixel = read_pixel(bytes, offset, pixel_size)?;
+            // A natural orientation gives a contiguous output range and can use
+            // slice::fill for repeated packets.
+            if origin_top && !origin_right {
+                out[encoded_index..end_index].fill(pixel);
             } else {
-                // Raw packet
-                for _ in 0..count {
-                    if offset + pixel_size > bytes.len() {
-                        return Err(ImageError::new("Unexpected EOF in raw packet"));
-                    }
-
-                    let pixel = &bytes[offset..offset + pixel_size];
-                    offset += pixel_size;
-
-                    let dst_y = if origin_top { y } else { height - 1 - y };
-                    let o = ((dst_y * width + x) * 4) as usize;
-
-                    Self::write_pixel(out, o, pixel);
-
-                    x += 1;
-                    if x >= width {
-                        x = 0;
-                        y += 1;
-                        if y >= height {
-                            break;
-                        }
-                    }
+                for logical in encoded_index..end_index {
+                    let index = destination_index(logical, width, height, origin_top, origin_right);
+                    out[index] = pixel;
                 }
             }
+        } else if origin_top && !origin_right {
+            let byte_count = count
+                .checked_mul(pixel_size)
+                .ok_or_else(|| ImageError::new("TGA raw RLE packet size overflow"))?;
+            let end = offset
+                .checked_add(byte_count)
+                .ok_or_else(|| ImageError::new("TGA raw RLE packet offset overflow"))?;
+            let source = bytes
+                .get(*offset..end)
+                .ok_or_else(|| ImageError::new("Unexpected EOF in TGA raw RLE packet"))?;
+            let destination = &mut out[encoded_index..end_index];
+            if pixel_size == 4 {
+                crate::simd::bgra8_to_u32(source, destination);
+            } else {
+                for (dst, pixel) in destination.iter_mut().zip(source.chunks_exact(3)) {
+                    *dst = pack_rgba(pixel[2], pixel[1], pixel[0], 255);
+                }
+            }
+            *offset = end;
+        } else {
+            for logical in encoded_index..end_index {
+                let pixel = read_pixel(bytes, offset, pixel_size)?;
+                let index = destination_index(logical, width, height, origin_top, origin_right);
+                out[index] = pixel;
+            }
         }
-
-        Ok(())
+        encoded_index = end_index;
     }
+    Ok(())
 }
 
-impl super::Decoder for Tga {
-    fn width(&self) -> u32 {
-        self.width
-    }
-
-    fn height(&self) -> u32 {
-        self.height
-    }
-
-    fn as_bytes(&self) -> Vec<u8> {
-        self.data.clone()
-    }
-    fn pixels(&self) -> Vec<u32> {
-        let mut pixels = Vec::with_capacity((self.width * self.height) as usize);
-        for chunk in self.data.chunks(4) {
-            let r = chunk[0] as u32;
-            let g = chunk[1] as u32;
-            let b = chunk[2] as u32;
-            let a = chunk[3] as u32;
-            pixels.push((r << 24) | (g << 16) | (b << 8) | a);
-        }
-        pixels
-    }
-}
+super::impl_rgba8_decoder!(Tga);

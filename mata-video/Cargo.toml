@@ -1,0 +1,19 @@
+[package]
+name = "mata-video"
+version = "0.1.0"
+edition = "2024"
+description = "Streaming native video decoding for Windows and Linux"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", default-features = false, features = [
+    "std",
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gstreamer = { version = "0.25.4", default-features = false }

@@ -1,42 +1,17 @@
-use std::ptr::null_mut;
+//! Implements the `drop` module.
+//!
+//! This module documents both public API items and internal implementation details.
 
-use super::{Display, WindowHandle, GC, XImage};
-
-#[link(name = "X11")]
-unsafe extern "C" {
-    fn XDestroyWindow(display: Display, window: WindowHandle);
-    fn XFreeGC(display: Display, gc: GC);
-    fn XCloseDisplay(display: Display);
-
-    fn XDestroyImage(image: *mut XImage);
-}
+use x11rb::{ connection::Connection, protocol::xproto::ConnectionExt as _ };
 
 impl Drop for super::PlatformWindow {
+    /// Performs the drop operation.
+    ///
+    /// Visibility: **private**.
+    #[doc = "Implements the drop operation. Visibility: private/internal."]
     fn drop(&mut self) {
-        unsafe {
-            // Destroy image (also frees data if owned)
-            if !self.image.is_null() {
-                XDestroyImage(self.image);
-                self.image = null_mut();
-            }
-
-            // Free graphics context
-            if !self.gc.is_null() {
-                XFreeGC(self.display, self.gc);
-                self.gc = null_mut();
-            }
-
-            // Destroy window
-            if self.window != 0 {
-                XDestroyWindow(self.display, self.window);
-                self.window = 0;
-            }
-
-            // Close display
-            if !self.display.is_null() {
-                XCloseDisplay(self.display);
-                self.display = null_mut();
-            }
-        }
+        self.renderer.shutdown(&self.connection);
+        let _ = self.connection.destroy_window(self.window);
+        let _ = self.connection.flush();
     }
 }

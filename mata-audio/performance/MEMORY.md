@@ -1,0 +1,9 @@
+# P502-P526 memory accounting and locality
+
+`DecoderMemoryUsage` is the common per-decoder report. It separates the decoder object's persistent state from reusable sample/transform scratch, compressed-byte capacity, seek-index capacity and cold metadata/setup capacity, and separately reports scratch/compressed high-water marks. `mata-audio-memory-perf` writes those fields for every corpus decoder and can repeat reset/decode cycles for an hour (`MATA_AUDIO_MEMORY_SECONDS=3600`).
+
+The hard safety ceilings are deliberately format-independent: decoder-controlled scratch is capped at 256 MiB per bounded allocation and setup/metadata allocations at 128 MiB. Format parsers perform checked multiplication before growth. These are corruption-safety ceilings, not desired steady-state budgets; the measured per-codec results are written to `performance/results/memory.csv`.
+
+Hot float/integer transform storage uses 64-byte-aligned reusable arenas where SIMD benefits (Vorbis IMDCT and FLAC channel/residual scratch). Vorbis codebook dimensions/entry counts and fast-table fields use validated compact integer widths, FLAC metadata payloads are boxed to exact size, and setup/comments are kept outside the hot packet/frame state. Normal reset/seek retains allocations; `Decoder::trim_memory`, `AudioFrameBuffer::shrink_to_fit_non_realtime`, and `AudioSource::trim_memory` are explicit cold-path reclamation controls.
+
+`run_playback_memory_validation.sh` supplies the complementary playback probes: one looping voice for the long memory-flatness run and 128 simultaneous looping voices for scaling. `PlaybackTelemetry` exposes current/high-water retained Voice bytes without allocating in the device callback. `profile_allocations.sh` combines the crate's counting allocator with optional heaptrack/Valgrind call-stack profiling.

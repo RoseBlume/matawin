@@ -4,30 +4,60 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-cpal = {version = "0.17.3", default-features = false, features = ["audio_thread_priority"] }
-# image = "0.25.9"
-mataimage = { path = "../mataimage", default-features = false, features = ["png", "bmp", "tga"]}
-# kira = "0.12.0"
-# rodio = "0.21.1"
-symphonia = { version = "0.5.5", default-features = false, features = ["all-formats", "mpa", "flac", "vorbis", "pcm"] }
-# libwayland-dev
-# libwayland-client-extra++1
-# Xwayland
+mata-audio = { path = "../mata-audio" }
+mataimage = { path = "../mataimage", features = ["svg"] }
+matafonts = { path = "../matafonts" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi"
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = { version = "0.31.15", optional = true }
+wayland-protocols = { version = "0.32.13", features = ["client"], optional = true }
+# memmap2 = { version = "0.9", optional = true }
+# tempfile = { version = "3", optional = true }
+# rustix = { version = "1.1", features = ["event"], optional = true }
+x11rb = { version = "0.14.0", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6.1", default-features = false, features = ["native-activity"] }
+ndk = { version = "0.9", default-features = false, features = [
+    "audio",
+    "api-level-26",
+] }
+ndk-context = "0.1"
+jni = "0.22"
+libc = "0.2"
+num-derive = "0.4"
+num-traits = "0.2"
 
 [features]
-default = ["x11"]
+default = ["wayland", "x11"]
+# Opt-in native web engine integration. Disabled in default builds.
+webview = []
+wayland = [
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    # "dep:memmap2",
+    # "dep:tempfile",
+    # "dep:rustix",
+]
+x11 = ["dep:x11rb"]
 
 
 
-# Windowing Features
-x11 = []
-# Does not work yet and untested
-wayland = []
-
-
-[target.x86_64-unknown-linux-gnu.dependencies]
-libc = "0.2.183"
-
-[dev-dependencies]
-rand = "0.9.2"
+[[example]]
+name = "browser"
+path = "examples/browser.rs"
+required-features = ["webview"]
