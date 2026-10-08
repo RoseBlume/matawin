@@ -79,13 +79,13 @@ pub(super) fn detect_pixels() -> PixelSimd {
     if !available() {
         return PixelSimd {
             rgba8: scalar_rgba8,
-            rgb8: scalar_rgb8,
+            _rgb8: scalar_rgb8,
             gray8: scalar_gray8,
             bgra8: scalar_bgra8,
             planar_rgb8: scalar_planar_rgb8,
             argb_rotate: scalar_argb_rotate,
-            rgb8_argb: scalar_rgb8_argb,
-            rgba8_argb: scalar_rgba8_argb,
+            _rgb8_argb: scalar_rgb8_argb,
+            _rgba8_argb: scalar_rgba8_argb,
         };
     }
 
@@ -94,21 +94,21 @@ pub(super) fn detect_pixels() -> PixelSimd {
         PixelSimd {
             rgba8: rgba8_to_u32_neon,
             #[cfg(target_arch = "aarch64")]
-            rgb8: rgb8_to_u32_neon,
+            _rgb8: rgb8_to_u32_neon,
             #[cfg(target_arch = "arm")]
-            rgb8: scalar_rgb8,
+            _rgb8: scalar_rgb8,
             gray8: gray8_to_u32_neon,
             bgra8: bgra8_to_u32_neon,
             planar_rgb8: planar_rgb8_to_u32_neon,
             argb_rotate: argb_rotate_neon,
             #[cfg(target_arch = "aarch64")]
-            rgb8_argb: rgb8_to_argb_neon,
+            _rgb8_argb: rgb8_to_argb_neon,
             #[cfg(target_arch = "arm")]
-            rgb8_argb: scalar_rgb8_argb,
+            _rgb8_argb: scalar_rgb8_argb,
             #[cfg(target_arch = "aarch64")]
-            rgba8_argb: rgba8_to_argb_neon,
+            _rgba8_argb: rgba8_to_argb_neon,
             #[cfg(target_arch = "arm")]
-            rgba8_argb: scalar_rgba8_argb,
+            _rgba8_argb: scalar_rgba8_argb,
         }
     }
 
@@ -116,13 +116,13 @@ pub(super) fn detect_pixels() -> PixelSimd {
     {
         PixelSimd {
             rgba8: scalar_rgba8,
-            rgb8: scalar_rgb8,
+            _rgb8: scalar_rgb8,
             gray8: gray8_to_u32_neon,
             bgra8: scalar_bgra8,
             planar_rgb8: planar_rgb8_to_u32_neon,
             argb_rotate: argb_rotate_neon,
-            rgb8_argb: scalar_rgb8_argb,
-            rgba8_argb: scalar_rgba8_argb,
+            _rgb8_argb: scalar_rgb8_argb,
+            _rgba8_argb: scalar_rgba8_argb,
         }
     }
 }
